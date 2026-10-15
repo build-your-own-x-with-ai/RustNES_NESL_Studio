@@ -1,4 +1,3 @@
 /target
 *.nes
-!examples/**/*.nes
 .DS_Store

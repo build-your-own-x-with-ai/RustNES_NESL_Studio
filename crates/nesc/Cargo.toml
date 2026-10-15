@@ -1,0 +1,9 @@
+[package]
+name = "nesc"
+description = "NESL command line compiler and web editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nesl = { path = "../nesl" }

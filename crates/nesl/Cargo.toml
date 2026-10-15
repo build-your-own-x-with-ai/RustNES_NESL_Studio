@@ -1,0 +1,11 @@
+[package]
+name = "nesl"
+description = "NESL: a high-level language compiler that produces NES ROMs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+nes-sim = { path = "../nes-sim" }

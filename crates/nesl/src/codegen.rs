@@ -93,6 +93,12 @@ pub(crate) fn fit(v: i64, t: Type, pos: Pos) -> R<u16> {
     Ok((v & max) as u16)
 }
 
+impl Default for Codegen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Codegen {
     pub fn new() -> Self {
         Codegen {

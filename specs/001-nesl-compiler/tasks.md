@@ -61,14 +61,14 @@ description: "Task list for NESL compiler and editor"
 
 ## Phase 5: User Story 3 - 浏览器编辑器 (P3)
 
-- [ ] T025 [US3] 测试：HTTP 请求解析、`/api/compile` JSON（成功/失败）、`/api/examples`、404/413 `crates/nesc/src/server.rs`
-- [ ] T026 [US3] 实现 HTTP 服务、JSON、base64 `crates/nesc/src/server.rs`
-- [ ] T027 [US3] 编辑器页面（行号、高亮错误行、运行/下载、示例、jsnes 画布、键盘映射）`crates/nesc/web/index.html`
+- [x] T025 [US3] 测试：HTTP 请求解析、`/api/compile` JSON（成功/失败）、`/api/examples`、404/413 `crates/nesc/src/server.rs`
+- [x] T026 [US3] 实现 HTTP 服务、JSON、base64 `crates/nesc/src/server.rs`
+- [x] T027 [US3] 编辑器页面（行号、高亮错误行、运行/下载、示例、jsnes 画布、键盘映射）`crates/nesc/web/index.html`
 
 ## Phase 6: Polish
 
-- [ ] T028 [P] README（中文）与语言参考链接
-- [ ] T029 确定性编译测试；`cargo clippy` 清理
+- [x] T028 [P] README（中文）与语言参考链接
+- [x] T029 确定性编译测试；`cargo clippy` 清理
 - [ ] T030 合并 `001-nesl-compiler` 到 `main`
 
 ## Dependencies

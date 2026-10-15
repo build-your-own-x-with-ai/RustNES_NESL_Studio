@@ -178,7 +178,7 @@ fn complex_operands_on_both_sides() {
             r1 = (a + b) * (c - d) / (e % f);
             r2 = (w - (a as u16)) - (w >> 2) + (b + (c - d));
         }");
-    assert_eq!(r.u8("r1"), ((13u32 * 14) % 256 / 2) as u8);
+    assert_eq!(r.u8("r1"), (13u8.wrapping_mul(14)) / (17 % 5));
     assert_eq!(r.u16("r2"), 500 - 9 - 125 + 18);
 }
 

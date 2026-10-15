@@ -343,13 +343,10 @@ impl Parser {
 
     fn binary(&mut self, min_level: u8) -> PResult<Expr> {
         let mut lhs = self.cast()?;
-        loop {
-            let Some((op, level)) = (match self.peek() {
-                Tok::Sym(s) => binop(s),
-                _ => None,
-            }) else {
-                break;
-            };
+        while let Some((op, level)) = match self.peek() {
+            Tok::Sym(s) => binop(s),
+            _ => None,
+        } {
             if level < min_level {
                 break;
             }

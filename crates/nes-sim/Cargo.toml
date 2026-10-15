@@ -1,0 +1,8 @@
+[package]
+name = "nes-sim"
+description = "Minimal 6502 CPU + NES test machine used to execute compiled ROMs in tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

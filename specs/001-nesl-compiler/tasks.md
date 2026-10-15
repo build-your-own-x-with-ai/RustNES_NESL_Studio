@@ -69,7 +69,7 @@ description: "Task list for NESL compiler and editor"
 
 - [x] T028 [P] README（中文）与语言参考链接
 - [x] T029 确定性编译测试；`cargo clippy` 清理
-- [ ] T030 合并 `001-nesl-compiler` 到 `main`
+- [x] T030 合并 `001-nesl-compiler` 到 `main`
 
 ## Dependencies
 

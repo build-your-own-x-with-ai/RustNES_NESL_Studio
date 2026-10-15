@@ -17,19 +17,19 @@ description: "Task list for NESL compiler and editor"
 
 ## Phase 1: Setup
 
-- [ ] T001 初始化 git、Spec Kit、宪章 `.specify/memory/constitution.md`
-- [ ] T002 创建 Cargo workspace：`crates/nes-sim`、`crates/nesl`、`crates/nesc`
+- [x] T001 初始化 git、Spec Kit、宪章 `.specify/memory/constitution.md`
+- [x] T002 创建 Cargo workspace：`crates/nes-sim`、`crates/nesl`、`crates/nesc`
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-- [ ] T003 [P] 测试：6502 指令/标志/栈/NMI 单测 + nestest 日志一致性 `crates/nes-sim/tests/`
-- [ ] T004 [P] 实现 6502 CPU `crates/nes-sim/src/cpu.rs`
-- [ ] T005 [P] 测试 + 实现简化 NES 测试机（VRAM/OAM DMA/手柄/帧 NMI）`crates/nes-sim/src/nes.rs`
-- [ ] T006 [P] 测试：指令编码、零页自动选择、标签解析、分支松弛 `crates/nesl/src/asm.rs`
-- [ ] T007 实现汇编器 `crates/nesl/src/asm.rs`
-- [ ] T008 [P] 测试 + 实现 iNES 打包（头、向量、CHR）`crates/nesl/src/rom.rs`
-- [ ] T009 [P] 测试 + 实现词法分析 `crates/nesl/src/lexer.rs`
-- [ ] T010 测试 + 实现语法分析与 AST `crates/nesl/src/parser.rs`、`ast.rs`
+- [x] T003 [P] 测试：6502 指令/标志/栈/NMI 单测 + nestest 日志一致性 `crates/nes-sim/tests/`
+- [x] T004 [P] 实现 6502 CPU `crates/nes-sim/src/cpu.rs`
+- [x] T005 [P] 测试 + 实现简化 NES 测试机（VRAM/OAM DMA/手柄/帧 NMI）`crates/nes-sim/src/nes.rs`
+- [x] T006 [P] 测试：指令编码、零页自动选择、标签解析、分支松弛 `crates/nesl/src/asm.rs`
+- [x] T007 实现汇编器 `crates/nesl/src/asm.rs`
+- [x] T008 [P] 测试 + 实现 iNES 打包（头、向量、CHR）`crates/nesl/src/rom.rs`
+- [x] T009 [P] 测试 + 实现词法分析 `crates/nesl/src/lexer.rs`
+- [x] T010 测试 + 实现语法分析与 AST `crates/nesl/src/parser.rs`、`ast.rs`
 
 **Checkpoint**: 能把文本解析成 AST，能把汇编 IR 打包成可在测试机启动的 ROM
 
@@ -39,14 +39,14 @@ description: "Task list for NESL compiler and editor"
 
 **Independent Test**: `crates/nesl/tests/lang.rs` 编译→执行→断言全局变量
 
-- [ ] T011 [US1] 测试：端到端测试工具 `crates/nesl/tests/common/mod.rs`（编译、运行至 halt、按名读取变量）
-- [ ] T012 [US1] 测试：u8/u16 算术、比较、逻辑、移位、`as` `crates/nesl/tests/lang.rs`
-- [ ] T013 [US1] 测试：if/while/loop/for/break/continue、函数参数与返回值、数组 `crates/nesl/tests/lang.rs`
-- [ ] T014 [US1] 测试：诊断（未定义名、类型不匹配、递归、缺 main）带行列 `crates/nesl/tests/errors.rs`
-- [ ] T015 [US1] 实现运行时（复位、NMI、乘除法）`crates/nesl/src/runtime.rs`
-- [ ] T016 [US1] 实现语义检查与代码生成 `crates/nesl/src/codegen.rs`
-- [ ] T017 [US1] 实现 `compile()` 入口与 `Diagnostic` `crates/nesl/src/lib.rs`
-- [ ] T018 [US1] CLI `nesc build/check`（含 `--asm`）`crates/nesc/src/main.rs`
+- [x] T011 [US1] 测试：端到端测试工具 `crates/nesl/tests/common/mod.rs`（编译、运行至 halt、按名读取变量）
+- [x] T012 [US1] 测试：u8/u16 算术、比较、逻辑、移位、`as` `crates/nesl/tests/lang.rs`
+- [x] T013 [US1] 测试：if/while/loop/for/break/continue、函数参数与返回值、数组 `crates/nesl/tests/lang.rs`
+- [x] T014 [US1] 测试：诊断（未定义名、类型不匹配、递归、缺 main）带行列 `crates/nesl/tests/errors.rs`
+- [x] T015 [US1] 实现运行时（复位、NMI、乘除法）`crates/nesl/src/runtime.rs`
+- [x] T016 [US1] 实现语义检查与代码生成 `crates/nesl/src/codegen.rs`
+- [x] T017 [US1] 实现 `compile()` 入口与 `Diagnostic` `crates/nesl/src/lib.rs`
+- [x] T018 [US1] CLI `nesc build/check`（含 `--asm`）`crates/nesc/src/main.rs`
 
 **Checkpoint**: MVP —— 命令行可把纯逻辑程序编译成可运行 ROM
 

@@ -2,8 +2,12 @@
 
 pub mod asm;
 pub mod ast;
+pub mod builtins;
+pub mod codegen;
 pub mod lexer;
 pub mod parser;
+pub mod rom;
+pub mod runtime;
 
 use std::fmt;
 
@@ -48,6 +52,19 @@ pub struct CompileOutput {
     pub prg_used: usize,
 }
 
-pub fn compile(_src: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
-    Err(vec![Diagnostic::new(ast::Pos::default(), "not implemented")])
+/// Compiles NESL source into an iNES ROM image.
+pub fn compile(src: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
+    let prog = parser::parse(src).map_err(|d| vec![d])?;
+    let mut cg = codegen::Codegen::new();
+    cg.program(&prog);
+    if !cg.errors.is_empty() {
+        return Err(cg.errors);
+    }
+    let top = ast::Pos { line: 1, col: 1 };
+    let asm = asm::assemble(&cg.e.items, 0x8000).map_err(|m| vec![Diagnostic::new(top, m)])?;
+    let chr = vec![0u8; rom::CHR_SIZE];
+    let sym = |n: &str| asm.symbols[n];
+    let rom = rom::build_ines(&asm.code, sym("__nmi"), sym("__reset"), sym("__irq"), &chr)
+        .map_err(|m| vec![Diagnostic::new(top, m)])?;
+    Ok(CompileOutput { rom, prg_used: asm.code.len(), symbols: asm.symbols, vars: cg.vars, listing: asm.listing })
 }

@@ -31,3 +31,23 @@ impl std::error::Error for Diagnostic {}
 
 #[cfg(test)]
 mod tests;
+
+/// A global variable's location, exposed for tooling and tests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VarInfo {
+    pub addr: u16,
+    pub size: u16,
+}
+
+#[derive(Clone, Debug)]
+pub struct CompileOutput {
+    pub rom: Vec<u8>,
+    pub symbols: std::collections::BTreeMap<String, u16>,
+    pub vars: std::collections::BTreeMap<String, VarInfo>,
+    pub listing: String,
+    pub prg_used: usize,
+}
+
+pub fn compile(_src: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
+    Err(vec![Diagnostic::new(ast::Pos::default(), "not implemented")])
+}

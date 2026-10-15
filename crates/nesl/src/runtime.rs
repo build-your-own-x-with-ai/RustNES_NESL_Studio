@@ -3,7 +3,7 @@
 
 use crate::asm::{Item, Op, Op::*, Operand};
 
-// Zero-page locations reserved for the runtime ($00-$0F). User variables start at $10.
+// Zero-page locations reserved for the runtime ($00-$15). User variables start at $16.
 pub const TMP0: u16 = 0x00;
 pub const TMP1: u16 = 0x01;
 pub const TMP2: u16 = 0x02;
@@ -18,9 +18,16 @@ pub const SCROLL_Y: u16 = 0x0C;
 pub const RNG: u16 = 0x0D;
 pub const TMP4: u16 = 0x0E;
 pub const TMP5: u16 = 0x0F;
-pub const USER_ZP_START: u16 = 0x10;
+// Argument slots for built-in routines.
+pub const ARG0: u16 = 0x10;
+pub const ARG1: u16 = 0x11;
+pub const ARG2: u16 = 0x12;
+pub const ARG3: u16 = 0x13;
+pub const ARG4: u16 = 0x14;
+pub const USER_ZP_START: u16 = 0x16;
 pub const OAM_SHADOW: u16 = 0x0200;
-pub const USER_RAM_START: u16 = 0x0300;
+pub const PRINT_BUF: u16 = 0x0300; // 3 bytes used by print_u8
+pub const USER_RAM_START: u16 = 0x0310;
 pub const USER_RAM_END: u16 = 0x0800;
 
 pub const PPUCTRL: u16 = 0x2000;

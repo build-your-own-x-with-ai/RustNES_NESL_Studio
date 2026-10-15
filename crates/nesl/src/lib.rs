@@ -63,7 +63,19 @@ pub fn compile(src: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
     }
     let top = ast::Pos { line: 1, col: 1 };
     let asm = asm::assemble(&cg.e.items, 0x8000).map_err(|m| vec![Diagnostic::new(top, m)])?;
-    let chr = vec![0u8; rom::CHR_SIZE];
+    let mut tiles = Vec::new();
+    let mut errors = Vec::new();
+    for t in &cg.tiles {
+        let rows: Vec<&str> = t.rows.iter().map(|(r, _)| r.as_str()).collect();
+        match chr::encode_tile(&rows) {
+            Ok(data) => tiles.push((t.index, data)),
+            Err(m) => errors.push(Diagnostic::new(t.pos, m)),
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let chr = chr::build_chr(&tiles);
     let sym = |n: &str| asm.symbols[n];
     let rom = rom::build_ines(&asm.code, sym("__nmi"), sym("__reset"), sym("__irq"), &chr)
         .map_err(|m| vec![Diagnostic::new(top, m)])?;

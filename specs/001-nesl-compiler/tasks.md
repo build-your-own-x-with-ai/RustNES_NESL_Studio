@@ -52,12 +52,12 @@ description: "Task list for NESL compiler and editor"
 
 ## Phase 4: User Story 2 - 内建 NES API (P2)
 
-- [ ] T019 [P] [US2] 测试：tile 文本像素 → CHR 位平面；内置字体存在 `crates/nesl/src/chr.rs`
-- [ ] T020 [US2] 实现字体与 tile 编码 `crates/nesl/src/chr.rs`
-- [ ] T021 [US2] 测试：load_palette / print / print_u8 / vram_* 写入 VRAM `crates/nesl/tests/nes_api.rs`
-- [ ] T022 [US2] 测试：sprite/hide_sprite → OAM；joypad 驱动变量；wait_vblank/frame_count；rand；scroll；play_tone `crates/nesl/tests/nes_api.rs`
-- [ ] T023 [US2] 实现内建函数与运行时例程 `crates/nesl/src/builtins.rs`、`runtime.rs`
-- [ ] T024 [P] [US2] 示例程序 `examples/hello.nesl`、`examples/sprite.nesl`、`examples/game.nesl`，并测试全部示例可编译运行
+- [x] T019 [P] [US2] 测试：tile 文本像素 → CHR 位平面；内置字体存在 `crates/nesl/src/chr.rs`
+- [x] T020 [US2] 实现字体与 tile 编码 `crates/nesl/src/chr.rs`
+- [x] T021 [US2] 测试：load_palette / print / print_u8 / vram_* 写入 VRAM `crates/nesl/tests/nes_api.rs`
+- [x] T022 [US2] 测试：sprite/hide_sprite → OAM；joypad 驱动变量；wait_vblank/frame_count；rand；scroll；play_tone `crates/nesl/tests/nes_api.rs`
+- [x] T023 [US2] 实现内建函数与运行时例程 `crates/nesl/src/builtins.rs`、`runtime.rs`
+- [x] T024 [P] [US2] 示例程序 `examples/hello.nesl`、`examples/sprite.nesl`、`examples/game.nesl`，并测试全部示例可编译运行
 
 ## Phase 5: User Story 3 - 浏览器编辑器 (P3)
 

@@ -74,7 +74,7 @@ fn negate(op: BinOp) -> BinOp {
     }
 }
 
-fn contains_call(e: &Expr) -> bool {
+pub(crate) fn contains_call(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Call(..) => true,
         ExprKind::Index(_, i) => contains_call(i),
@@ -112,7 +112,7 @@ impl Codegen {
         }
     }
 
-    fn err<T>(&self, pos: Pos, msg: impl Into<String>) -> R<T> {
+    pub(crate) fn err<T>(&self, pos: Pos, msg: impl Into<String>) -> R<T> {
         Err(Diagnostic::new(pos, msg))
     }
 
@@ -558,7 +558,7 @@ impl Codegen {
         }
     }
 
-    fn store(&mut self, addr: u16, ty: Type) {
+    pub(crate) fn store(&mut self, addr: u16, ty: Type) {
         self.e.abs(STA, addr);
         if ty == Type::U16 {
             self.e.abs(STX, addr + 1);
@@ -1033,7 +1033,8 @@ impl Codegen {
     // ------------------------------------------------------------------ statements
 
     fn function(&mut self, f: &Function) {
-        let sig = &self.funcs[&f.name];
+        // Functions whose declaration failed (e.g. name clash) were already reported.
+        let Some(sig) = self.funcs.get(&f.name) else { return };
         let mut scope = HashMap::new();
         for ((name, ty), (_, addr)) in f.params.iter().zip(&sig.params) {
             scope.insert(name.clone(), Sym::Var { addr: *addr, ty: *ty });

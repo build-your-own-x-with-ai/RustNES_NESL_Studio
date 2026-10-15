@@ -1,0 +1,41 @@
+// Move a sprite with the D-pad; its coordinates are shown on screen.
+const PAL: [u8] = [
+    0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,
+    0x0F, 0x16, 0x27, 0x30,  0x0F, 0x16, 0x27, 0x30,  0x0F, 0x16, 0x27, 0x30,  0x0F, 0x16, 0x27, 0x30,
+];
+
+// A smiley face: 1 = red, 2 = orange, 3 = white
+tile 1 = [
+    "..2222..",
+    ".222222.",
+    "22322322",
+    "22222222",
+    "23222232",
+    "22333322",
+    ".222222.",
+    "..2222..",
+];
+
+var x: u8 = 124;
+var y: u8 = 112;
+
+fn main() {
+    load_palette(PAL);
+    print(9, 3, "USE THE D-PAD");
+    print(10, 26, "X:");
+    print(17, 26, "Y:");
+    ppu_on();
+    loop {
+        wait_vblank();
+        // VRAM updates first, while we are still inside vblank
+        print_u8(13, 26, x);
+        print_u8(20, 26, y);
+
+        let pad = joypad(0);
+        if pad & BTN_LEFT { x -= 1; }
+        if pad & BTN_RIGHT { x += 1; }
+        if pad & BTN_UP { y -= 1; }
+        if pad & BTN_DOWN { y += 1; }
+        sprite(0, x, y, 1, 0);
+    }
+}

@@ -68,7 +68,7 @@ f(x, y);                               // 表达式语句
 |---|---|
 | `wait_vblank()` | 等待下一帧 NMI（OAM DMA 已完成，适合少量 VRAM 写入） |
 | `ppu_on()` / `ppu_off()` | 打开（背景+精灵+NMI）/ 关闭渲染 |
-| `load_palette(PAL)` | 将 32 字节常量数组写入调色板 `$3F00` |
+| `load_palette(PAL)` | 将常量数组（≤ 32 字节）写入调色板 `$3F00` 起 |
 | `vram_addr(addr: u16)` | 设置 VRAM 写地址（自动恢复滚动） |
 | `vram_put(v: u8)` | 写一个字节到 VRAM，地址 +1 |
 | `vram_fill(v: u8, n: u16)` | 从当前地址连续写 n 个 v |

@@ -1,0 +1,113 @@
+// CATCH THE STARS
+// Move the basket with LEFT/RIGHT and catch falling stars.
+// Every 5 stars the game speeds up. Miss 3 and it's game over; press START to play again.
+
+const PAL: [u8] = [
+    0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,
+    0x0F, 0x17, 0x27, 0x30,  0x0F, 0x28, 0x38, 0x30,  0x0F, 0x11, 0x21, 0x31,  0x0F, 0x19, 0x29, 0x39,
+];
+
+const PLAYER_Y = 200;
+const FLOOR = 224;
+
+tile 1 = [            // basket
+    "3......3",
+    "3......3",
+    "31....13",
+    "31111113",
+    "32222223",
+    ".333333.",
+    "..3..3..",
+    "........",
+];
+
+tile 2 = [            // star
+    "...3....",
+    "...3....",
+    "..323...",
+    "33222333",
+    ".32223..",
+    "..3.3...",
+    ".3...3..",
+    "........",
+];
+
+var px: u8 = 120;
+var sx: u8;
+var sy: u8;
+var speed: u8 = 1;
+var score: u8;
+var lives: u8 = 3;
+var over: u8;
+var banner: u8;      // 1 = show GAME OVER, 2 = clear it (drawn during vblank)
+var sound: u8;       // frames left for the current tone
+
+fn new_star() {
+    sx = rand() % 224 + 16;
+    sy = 24;
+}
+
+fn beep(period: u16) {
+    play_tone(period);
+    sound = 6;
+}
+
+fn restart() {
+    score = 0;
+    lives = 3;
+    speed = 1;
+    over = 0;
+    banner = 2;
+    new_star();
+}
+
+fn main() {
+    load_palette(PAL);
+    print(8, 6, "CATCH THE STARS!");
+    print(2, 2, "SCORE");
+    print(21, 2, "LIVES");
+    new_star();
+    ppu_on();
+
+    loop {
+        wait_vblank();
+        print_u8(8, 2, score);
+        print_u8(27, 2, lives);
+        if banner == 1 { print(11, 14, "GAME OVER"); print(8, 16, "PRESS START"); banner = 0; }
+        if banner == 2 { print(11, 14, "         "); print(8, 16, "           "); banner = 0; }
+
+        if sound > 0 {
+            sound -= 1;
+            if sound == 0 { stop_sound(); }
+        }
+
+        if over {
+            if joypad(0) & BTN_START { restart(); }
+            continue;
+        }
+
+        let pad = joypad(0);
+        if pad & BTN_LEFT && px > 8 { px -= 2; }
+        if pad & BTN_RIGHT && px < 240 { px += 2; }
+
+        sy += speed;
+        if sy >= PLAYER_Y - 4 && sy < PLAYER_Y + 8 && sx + 8 > px && sx < px + 8 {
+            score += 1;
+            beep(0x0FD);
+            if score % 5 == 0 && speed < 4 { speed += 1; }
+            new_star();
+        } else if sy >= FLOOR {
+            lives -= 1;
+            beep(0x3F8);
+            if lives == 0 {
+                over = 1;
+                banner = 1;
+                hide_sprite(1);
+            }
+            new_star();
+        }
+
+        sprite(0, px, PLAYER_Y, 1, 0);
+        if !over { sprite(1, sx, sy, 2, 1); }
+    }
+}

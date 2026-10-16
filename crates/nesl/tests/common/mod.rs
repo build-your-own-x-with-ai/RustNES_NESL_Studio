@@ -61,6 +61,9 @@ impl Run {
         let a = self.addr(name);
         self.nes.peek(a) as u16 | (self.nes.peek(a + 1) as u16) << 8
     }
+    pub fn i8(&self, name: &str) -> i8 {
+        self.u8(name) as i8
+    }
     pub fn bytes(&self, name: &str) -> Vec<u8> {
         let v = &self.out.vars[name];
         (0..v.size).map(|i| self.nes.peek(v.addr + i)).collect()

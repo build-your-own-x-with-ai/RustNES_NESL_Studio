@@ -47,3 +47,35 @@ fn struct_errors() {
     assert!(m("struct E { x: u8, x: u8 } fn main() {}").contains("duplicate field `x`"));
     assert!(m("struct E { x: u8 } struct E { y: u8 } fn main() {}").contains("already defined"));
 }
+
+// ---------------------------------------------------------------- US2 i8
+
+#[test]
+fn signed_i8_arithmetic_and_comparisons() {
+    let r = run("
+        var x: u8 = 10; var vx: i8 = -3; var w: u16 = 1000; var v: i8 = -1;
+        var s: i8 = -8; var sh: i8; var a: i8 = -5; var b: i8 = 3;
+        var lt: u8; var gt: u8; var min: i8 = -128; var max: i8 = 127;
+        fn main() {
+            x += vx; w += v; sh = s >> 1;
+            if a < b { lt = 1; } if a > b { gt = 1; }
+            if min < max { lt += 1; }
+        }");
+    assert_eq!(r.u8("x"), 7);
+    assert_eq!(r.u16("w"), 999);
+    assert_eq!(r.i8("sh"), -4);
+    assert_eq!((r.u8("lt"), r.u8("gt")), (2, 0));
+}
+
+#[test]
+fn i8_sign_extension_to_u16() {
+    let r = run("var v: i8 = -2; var w: u16 = 100; fn main() { w = v as u16; }");
+    assert_eq!(r.u16("w"), 0xFFFE);
+}
+
+#[test]
+fn i8_errors() {
+    let m = |src: &str| errors(src)[0].message.clone();
+    assert!(m("var a: i8; var b: u8; fn main() { if a < b {} }").contains("type"));
+    assert!(m("var a: i8; fn main() { a = a / 3; }").contains("power of 2"));
+}

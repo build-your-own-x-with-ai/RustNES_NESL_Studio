@@ -123,13 +123,13 @@ impl Parser {
                     if self.eat_sym("[") {
                         match self.scalar_type()? {
                             Type::U8 => {}
-                            Type::U16 => return self.err("only `[u8]` constant arrays are supported"),
+                            Type::U16 | Type::I8 => return self.err("only `[u8]` constant arrays are supported"),
                         }
                         self.expect_sym("]")?;
                         self.expect_sym("=")?;
                         let elems = self.byte_list()?;
                         self.expect_sym(";")?;
-                        return Ok(Decl::Data { name, elems, pos });
+                        return Ok(Decl::Data { name, elem: Type::U8, elems, pos });
                     }
                     self.scalar_type()?;
                 }
@@ -149,7 +149,7 @@ impl Parser {
                     self.expect_sym(";")?;
                     let len = self.expr()?;
                     self.expect_sym("]")?;
-                    VarType::Array(len)
+                    VarType::Array(Type::U8, len)
                 } else {
                     VarType::Scalar(self.scalar_type()?)
                 };

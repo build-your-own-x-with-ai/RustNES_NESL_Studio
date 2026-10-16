@@ -61,7 +61,7 @@ fn max_ty(a: Type, b: Type) -> Type {
 
 fn type_max(t: Type) -> i64 {
     match t {
-        Type::U8 => 0xFF,
+        Type::U8 | Type::I8 => 0xFF,
         Type::U16 => 0xFFFF,
     }
 }
@@ -209,7 +209,7 @@ impl Codegen {
                 let v = self.const_expr(value, "constant value")?;
                 self.globals.insert(name.clone(), Sym::Const(v));
             }
-            Decl::Data { name, elems, pos } => {
+            Decl::Data { name, elems, pos, .. } => {
                 self.define(name, *pos)?;
                 let mut bytes = Vec::with_capacity(elems.len());
                 for el in elems {
@@ -222,9 +222,13 @@ impl Codegen {
                 self.globals.insert(name.clone(), Sym::Data { label: label.clone(), len: bytes.len() as u16 });
                 self.data.push((label, bytes));
             }
+            Decl::Struct { pos, .. } => return self.err(*pos, "not implemented yet"),
             Decl::Var { name, ty, init, pos } => {
                 self.define(name, *pos)?;
                 match ty {
+                    VarType::Struct(_) | VarType::StructArray(..) => {
+                        return self.err(*pos, "not implemented yet");
+                    }
                     VarType::Scalar(t) => {
                         let size = if *t == Type::U16 { 2 } else { 1 };
                         let addr = self.alloc(size, true, *pos)?;
@@ -237,7 +241,7 @@ impl Codegen {
                         self.globals.insert(name.clone(), Sym::Var { addr, ty: *t });
                         self.vars.insert(name.clone(), VarInfo { addr, size });
                     }
-                    VarType::Array(len) => {
+                    VarType::Array(_, len) => {
                         let n = self.const_expr(len, "array length")?;
                         if !(1..=256).contains(&n) {
                             return self.err(len.pos, "array length must be between 1 and 256");
@@ -838,8 +842,8 @@ impl Codegen {
         self.e.imp(DEY);
         self.e.br(BEQ, &done);
         match (left, ty) {
-            (true, Type::U8) => self.e.acc(ASL),
-            (false, Type::U8) => self.e.acc(LSR),
+            (true, Type::U8 | Type::I8) => self.e.acc(ASL),
+            (false, Type::U8 | Type::I8) => self.e.acc(LSR),
             (true, Type::U16) => {
                 self.e.acc(ASL);
                 self.e.abs(ROL, TMP1);
@@ -1187,6 +1191,9 @@ impl Codegen {
                     (None, None) => {}
                 }
                 self.e.imp(RTS);
+            }
+            Stmt::LetZeroed { pos, .. } | Stmt::Match { pos, .. } => {
+                return self.err(*pos, "not implemented yet");
             }
             Stmt::Expr(e) => {
                 if let ExprKind::Call(name, args) = &e.kind {

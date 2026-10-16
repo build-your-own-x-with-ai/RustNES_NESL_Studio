@@ -14,8 +14,8 @@ description: "Task list for NESL language extensions"
 
 ## Phase 2: Foundational
 
-- [ ] T202 测试：lexer `.`/`struct`/`match`；parser 解析 struct 声明、字段访问降级、数组元素类型、无初始化 let、match `crates/nesl/src/tests/parser.rs`
-- [ ] T203 实现 AST/lexer/parser 扩展 `crates/nesl/src/{ast,lexer,parser}.rs`
+- [x] T202 测试：lexer `.`/`struct`/`match`；parser 解析 struct 声明、字段访问降级、数组元素类型、无初始化 let、match `crates/nesl/src/tests/parser.rs`
+- [x] T203 实现 AST/lexer/parser 扩展 `crates/nesl/src/{ast,lexer,parser}.rs`
 
 ## Phase 3: US1 struct (P1) 🎯 MVP
 

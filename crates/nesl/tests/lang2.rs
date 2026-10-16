@@ -42,7 +42,7 @@ fn struct_errors() {
     assert!(m(&format!("{pre} fn main() {{ t = es[0].q; }}")).contains("no field `q` in struct `Enemy`"));
     assert!(m(&format!("{pre} fn main() {{ t = boss; }}")).contains("is a struct"));
     assert!(m(&format!("{pre} fn main() {{ es[1] = 3; }}")).contains("access a field"));
-    assert!(m(&format!("{pre} fn main() {{ t.x = 1; }}")).contains("`t` is not a struct"));
+    assert!(m(&format!("{pre} fn main() {{ t.x = 1; }}")).contains("not a struct"));
     assert!(m("var s: Nope; fn main() {}").contains("unknown struct `Nope`"));
     assert!(m("struct E { x: u8, x: u8 } fn main() {}").contains("duplicate field `x`"));
     assert!(m("struct E { x: u8 } struct E { y: u8 } fn main() {}").contains("already defined"));

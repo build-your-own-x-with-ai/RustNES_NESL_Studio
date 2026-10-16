@@ -16,9 +16,13 @@ pub(crate) type R<T> = Result<T, Diagnostic>;
 #[derive(Clone, Debug)]
 pub(crate) enum Sym {
     Var { addr: u16, ty: Type },
-    Array { addr: u16, len: u16 },
+    Array { addr: u16, len: u16, elem: Type },
     Const(i64),
-    Data { label: String, len: u16 },
+    Data { label: String, len: u16, elem: Type },
+    /// Marker for struct variables; field access routes to Var("name.field").
+    Struct(String),
+    /// Marker for struct arrays; field access routes to Array("name.field", ...).
+    StructArray(String),
 }
 
 struct FnSig {
@@ -38,6 +42,7 @@ pub struct Codegen {
     globals: HashMap<String, Sym>,
     pub vars: BTreeMap<String, VarInfo>,
     funcs: HashMap<String, FnSig>,
+    structs: HashMap<String, Vec<(String, Type)>>,
     scopes: Vec<HashMap<String, Sym>>,
     /// (continue label, break label) for each enclosing loop.
     loops: Vec<(String, String)>,
@@ -106,6 +111,7 @@ impl Codegen {
             globals: HashMap::new(),
             vars: BTreeMap::new(),
             funcs: HashMap::new(),
+            structs: HashMap::new(),
             scopes: Vec::new(),
             loops: Vec::new(),
             cur_ret: None,
@@ -129,6 +135,13 @@ impl Codegen {
         runtime::emit_math(&mut self.e);
         crate::builtins::emit_runtime(&mut self.e);
 
+        for d in &prog.items {
+            if let Decl::Struct { name, fields, pos } = d {
+                if let Err(e) = self.declare_struct(name, fields, *pos) {
+                    self.errors.push(e);
+                }
+            }
+        }
         for d in &prog.items {
             if let Err(e) = self.declare(d) {
                 self.errors.push(e);
@@ -198,6 +211,24 @@ impl Codegen {
         Ok(a)
     }
 
+    fn declare_struct(&mut self, name: &str, fields: &[(String, Type)], pos: Pos) -> R<()> {
+        if self.structs.contains_key(name) {
+            return self.err(pos, format!("struct `{name}` is already defined"));
+        }
+        self.define(name, pos)?;
+        if fields.is_empty() {
+            return self.err(pos, "struct cannot be empty");
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (f, _) in fields {
+            if !seen.insert(f) {
+                return self.err(pos, format!("duplicate field `{f}` in struct `{name}`"));
+            }
+        }
+        self.structs.insert(name.to_string(), fields.to_vec());
+        Ok(())
+    }
+
     fn const_expr(&self, e: &Expr, what: &str) -> R<i64> {
         self.const_val(e).ok_or_else(|| Diagnostic::new(e.pos, format!("{what} must be a constant expression")))
     }
@@ -219,15 +250,43 @@ impl Codegen {
                     return self.err(*pos, "constant array must have between 1 and 65535 elements");
                 }
                 let label = format!("d_{name}");
-                self.globals.insert(name.clone(), Sym::Data { label: label.clone(), len: bytes.len() as u16 });
+                self.globals.insert(name.clone(), Sym::Data { label: label.clone(), len: bytes.len() as u16, elem: Type::U8 });
                 self.data.push((label, bytes));
             }
-            Decl::Struct { pos, .. } => return self.err(*pos, "not implemented yet"),
+            Decl::Struct { .. } => {}
             Decl::Var { name, ty, init, pos } => {
                 self.define(name, *pos)?;
                 match ty {
-                    VarType::Struct(_) | VarType::StructArray(..) => {
-                        return self.err(*pos, "not implemented yet");
+                    VarType::Struct(sname) => {
+                        let Some(fields) = self.structs.get(sname).cloned() else {
+                            return self.err(*pos, format!("unknown struct `{sname}`"));
+                        };
+                        let size: u16 = fields.iter().map(|(_, t)| if *t == Type::U16 { 2 } else { 1 }).sum();
+                        let base = self.alloc(size, false, *pos)?;
+                        let mut off = 0u16;
+                        for (fname, fty) in &fields {
+                            let addr = base + off;
+                            self.globals.insert(format!("{name}.{fname}"), Sym::Var { addr, ty: *fty });
+                            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size: if *fty == Type::U16 { 2 } else { 1 } });
+                            off += if *fty == Type::U16 { 2 } else { 1 };
+                        }
+                        self.globals.insert(name.clone(), Sym::Struct(sname.clone()));
+                    }
+                    VarType::StructArray(sname, len_expr) => {
+                        let Some(fields) = self.structs.get(sname).cloned() else {
+                            return self.err(*pos, format!("unknown struct `{sname}`"));
+                        };
+                        let n = self.const_expr(len_expr, "array length")?;
+                        if !(1..=256).contains(&n) {
+                            return self.err(len_expr.pos, "array length must be between 1 and 256");
+                        }
+                        for (fname, fty) in &fields {
+                            let size = if *fty == Type::U16 { 2 } else { 1 };
+                            let addr = self.alloc(n as u16 * size, false, *pos)?;
+                            self.globals.insert(format!("{name}.{fname}"), Sym::Array { addr, len: n as u16, elem: *fty });
+                            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size: n as u16 * size });
+                        }
+                        self.globals.insert(name.clone(), Sym::StructArray(sname.clone()));
                     }
                     VarType::Scalar(t) => {
                         let size = if *t == Type::U16 { 2 } else { 1 };
@@ -250,7 +309,7 @@ impl Codegen {
                             return self.err(*pos, "RAM arrays cannot have an initializer (they start zeroed)");
                         }
                         let addr = self.alloc(n as u16, false, *pos)?;
-                        self.globals.insert(name.clone(), Sym::Array { addr, len: n as u16 });
+                        self.globals.insert(name.clone(), Sym::Array { addr, len: n as u16, elem: Type::U8 });
                         self.vars.insert(name.clone(), VarInfo { addr, size: n as u16 });
                     }
                 }
@@ -435,6 +494,17 @@ impl Codegen {
     }
 
     fn unknown_var(&self, name: &str, pos: Pos) -> Diagnostic {
+        if let Some(dot) = name.find('.') {
+            let base = &name[..dot];
+            let field = &name[dot + 1..];
+            match self.lookup(base) {
+                Some(Sym::Struct(sname) | Sym::StructArray(sname)) => {
+                    return Diagnostic::new(pos, format!("no field `{field}` in struct `{sname}`"));
+                }
+                _ => {}
+            }
+            return Diagnostic::new(pos, format!("`{base}` is not a struct or struct array"));
+        }
         Diagnostic::new(pos, format!("unknown variable `{name}`"))
     }
 
@@ -464,15 +534,17 @@ impl Codegen {
                 Some(Sym::Array { .. }) | Some(Sym::Data { .. }) => {
                     self.err(e.pos, format!("`{name}` is an array; use `{name}[i]` to read an element"))
                 }
+                Some(Sym::Struct(_)) => self.err(e.pos, format!("`{name}` is a struct; access a field with `{name}.field`")),
+                Some(Sym::StructArray(_)) => self.err(e.pos, format!("`{name}` is a struct array; access a field with `{name}[i].field`")),
                 Some(Sym::Const(_)) => unreachable!(),
                 None => Err(self.unknown_var(name, e.pos)),
             },
             ExprKind::Index(name, idx) => {
-                self.array_base(name, e.pos)?;
+                let (_, _, elem) = self.array_base(name, e.pos)?;
                 if self.ty(idx)? != Type::U8 {
                     return self.err(idx.pos, "array index must be u8");
                 }
-                Ok(Type::U8)
+                Ok(elem)
             }
             ExprKind::Call(name, _) => match self.call_ret(name, e.pos)? {
                 Some(t) => Ok(t),
@@ -506,10 +578,10 @@ impl Codegen {
         Ok(())
     }
 
-    fn array_base(&self, name: &str, pos: Pos) -> R<(Val, u16)> {
+    fn array_base(&self, name: &str, pos: Pos) -> R<(Val, u16, Type)> {
         match self.lookup(name) {
-            Some(Sym::Array { addr, len }) => Ok((Val::Num(addr), len)),
-            Some(Sym::Data { label, len }) => Ok((Val::Label(label, 0), len)),
+            Some(Sym::Array { addr, len, elem }) => Ok((Val::Num(addr), len, elem)),
+            Some(Sym::Data { label, len, elem }) => Ok((Val::Label(label.clone(), 0), len, elem)),
             Some(_) => self.err(pos, format!("`{name}` is not an array")),
             None => Err(self.unknown_var(name, pos)),
         }
@@ -524,7 +596,7 @@ impl Codegen {
 
     fn const_index(&self, name: &str, idx: &Expr, pos: Pos) -> R<Option<Val>> {
         let Some(i) = self.const_val(idx) else { return Ok(None) };
-        let (base, len) = self.array_base(name, pos)?;
+        let (base, len, _) = self.array_base(name, pos)?;
         if i < 0 || i >= len as i64 {
             return self.err(idx.pos, format!("index {i} is out of bounds for `{name}` (length {len})"));
         }
@@ -656,7 +728,7 @@ impl Codegen {
             self.e.ins(LDA, Operand::Abs(v));
             return Ok(());
         }
-        let (base, _) = self.array_base(name, pos)?;
+        let (base, _, _) = self.array_base(name, pos)?;
         self.index_to_x(idx)?;
         self.e.ins(LDA, Operand::AbsX(base));
         Ok(())
@@ -1109,6 +1181,9 @@ impl Codegen {
                 let addr = match self.lookup(name) {
                     Some(Sym::Array { addr, .. }) => addr,
                     Some(Sym::Data { .. }) => return self.err(*ipos, format!("cannot assign to constant array `{name}`")),
+                    Some(Sym::StructArray(sname)) => {
+                        return self.err(*ipos, format!("`{name}` is a struct array; access a field with `{name}[i].field`"));
+                    }
                     Some(_) => return self.err(*ipos, format!("`{name}` is not an array")),
                     None => return Err(self.unknown_var(name, *ipos)),
                 };

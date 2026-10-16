@@ -19,8 +19,8 @@ description: "Task list for NESL language extensions"
 
 ## Phase 3: US1 struct (P1) 🎯 MVP
 
-- [ ] T204 [US1] 测试：结构体变量、结构体数组、复合赋值、错误信息 `crates/nesl/tests/lang2.rs`
-- [ ] T205 [US1] 实现结构体注册（SoA 降级）`crates/nesl/src/codegen.rs`
+- [x] T204 [US1] 测试：结构体变量、结构体数组、复合赋值、错误信息 `crates/nesl/tests/lang2.rs`
+- [x] T205 [US1] 实现结构体注册（SoA 降级）`crates/nesl/src/codegen.rs`
 
 ## Phase 4: US2 i8 (P2)
 

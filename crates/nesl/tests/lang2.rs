@@ -139,3 +139,77 @@ fn typed_array_errors() {
     assert!(m("var t: [u16; 2]; var a: u8; fn main() { a = t[0]; }").contains("as u8"));
     assert!(m("fn main() { let b: [u8; 2] = 3; }").contains("initializer"));
 }
+
+// ---------------------------------------------------------------- US4 match
+
+#[test]
+fn match_values_alternatives_ranges_and_wildcard() {
+    let r = run("
+        var out: [u8; 12]; var calls: u8;
+        fn classify(v: u8) -> u8 {
+            let r: u8 = 0;
+            match v {
+                0 => r = 10,
+                1 | 2 => { r = 20; }
+                3..=9 => r = 30,
+                200..=255 => { r = 40; }
+                _ => r = 50,
+            }
+            return r;
+        }
+        fn next() -> u8 { calls += 1; return calls; }
+        fn main() {
+            let vals: [u8; 8];
+            vals[0] = 0; vals[1] = 1; vals[2] = 2; vals[3] = 3; vals[4] = 9; vals[5] = 10; vals[6] = 200; vals[7] = 255;
+            for i in 0..8 { out[i] = classify(vals[i]); }
+            match next() { 1 => out[8] = 1, 2 => out[8] = 2, _ => out[8] = 3 }
+            match 7 { 1 => out[9] = 1 }
+        }");
+    assert_eq!(&r.bytes("out")[..10], &[10, 20, 20, 30, 30, 50, 40, 40, 1, 0]);
+    assert_eq!(r.u8("calls"), 1, "scrutinee is evaluated exactly once");
+}
+
+#[test]
+fn match_on_i8_with_negative_patterns() {
+    let r = run("
+        var out: [u8; 4]; var d: [i8; 4];
+        fn main() {
+            d[0] = -1; d[1] = 0; d[2] = 1; d[3] = -100;
+            for i in 0..4 {
+                match d[i] { -1 => out[i] = 1, 0 => out[i] = 2, -128..=-2 => out[i] = 4, _ => out[i] = 3 }
+            }
+        }");
+    assert_eq!(r.bytes("out"), vec![1, 2, 3, 4]);
+}
+
+#[test]
+fn match_errors() {
+    let m = |src: &str| errors(src)[0].message.clone();
+    assert!(m("var a: u8; var b: u8; fn main() { match a { b => {} } }").contains("constant"));
+    assert!(m("var a: u8; fn main() { match a { 5..=1 => {} } }").contains("empty range"));
+    assert!(m("fn f() { match 1 { _ => f() } } fn main() { f(); }").contains("recursion"));
+}
+
+#[test]
+fn preview_enemy_loop_compiles_and_runs() {
+    let r = run_frames("
+        struct Enemy { x: u8, y: u8, hp: u8 }
+        var enemies: [Enemy; 8];
+        fn main() {
+            for i in 0..8 { enemies[i].x = i * 24; enemies[i].hp = i % 2; }
+            ppu_on();
+            loop {
+                wait_vblank();
+                for i in 0..8 {
+                    enemies[i].y += 1;
+                    match enemies[i].hp {
+                        0 => hide_sprite(i),
+                        _ => sprite(i, enemies[i].x, enemies[i].y, 2, 0),
+                    }
+                }
+            }
+        }", 6, |_| {});
+    assert_eq!(r.nes.peek(0x0200), 0xFF, "enemy 0 has hp 0 and is hidden");
+    assert_eq!(r.nes.peek(0x0207), 24, "enemy 1 sprite x");
+    assert!(r.nes.peek(0x0204) >= 4, "enemy 1 moved down");
+}

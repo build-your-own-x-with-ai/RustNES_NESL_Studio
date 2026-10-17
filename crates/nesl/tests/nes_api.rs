@@ -142,3 +142,20 @@ fn builtin_misuse_is_reported() {
     assert!(m("tile 1 = [\"..x.....\",\"\",\"\",\"\",\"\",\"\",\"\",\"\"]; fn main() {}").contains("pixel"));
     assert!(m("fn sprite() {} fn main() {}").contains("built-in"));
 }
+
+#[test]
+fn sprites_appear_exactly_at_the_given_y() {
+    // tile 1 is solid; sprite palette 0 colour 1 = $16. The NES shows a sprite one line
+    // below its OAM y, so the runtime must compensate for `sprite(i, x, y, ...)` to mean y.
+    let r = run_frames("
+        const PAL: [u8] = [0x0F,0x30,0x30,0x30, 0x0F,0x30,0x30,0x30, 0x0F,0x30,0x30,0x30, 0x0F,0x30,0x30,0x30,
+                           0x0F,0x16,0x16,0x16, 0x0F,0x16,0x16,0x16, 0x0F,0x16,0x16,0x16, 0x0F,0x16,0x16,0x16];
+        tile 1 = [\"11111111\", \"11111111\", \"11111111\", \"11111111\", \"11111111\", \"11111111\", \"11111111\", \"11111111\"];
+        metasprite M = [(0, 0, 1), (0, 8, 1)];
+        fn main() { load_palette(PAL); ppu_on(); sprite(1, 100, 50, 1, 0); metasprite(2, 120, 60, M); loop { wait_vblank(); } }",
+        4, |_| {});
+    let f = nes_sim::render::frame(&r.nes.bus, r.nes.frames - 1);
+    let px = |x: usize, y: usize| f[y * 256 + x];
+    assert_eq!((px(100, 49), px(100, 50), px(100, 57), px(100, 58)), (0x0F, 0x16, 0x16, 0x0F), "sprite rows 50-57");
+    assert_eq!((px(120, 59), px(120, 60), px(120, 75), px(120, 76)), (0x0F, 0x16, 0x16, 0x0F), "metasprite rows 60-75");
+}

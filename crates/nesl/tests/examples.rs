@@ -111,3 +111,24 @@ fn runner_scrolls_through_the_level_without_glitches() {
     assert!(cam > 0, "camera followed");
     assert_eq!(nes.bus.render_conflicts, 0);
 }
+
+#[test]
+fn runner_hero_stands_on_the_ground_with_no_gap() {
+    let out = build(&example("runner"));
+    let mut nes = TestNes::from_ines(&out.rom).unwrap();
+    nes.run_frames(40).unwrap(); // long enough to land
+    let (hx, hy) = (nes.peek(out.vars["hero.x"].addr) as usize, nes.peek(out.vars["hero.y"].addr) as usize);
+    assert_eq!(hy, 168 - 16, "physics puts the hero's 16-pixel box on the ground");
+    // Sprite pixels = where the picture changes when sprites are turned off.
+    let with = nes_sim::render::frame(&nes.bus, nes.frames - 1);
+    let mut bg_only = nes.bus.clone();
+    bg_only.ppumask &= !0x10;
+    let without = nes_sim::render::frame(&bg_only, nes.frames - 1);
+    let lowest = (0..240)
+        .rev()
+        .find(|&y| (hx..hx + 8).any(|x| with[y * 256 + x] != without[y * 256 + x]))
+        .expect("hero is drawn");
+    assert_eq!(lowest, 167, "the hero's feet touch the ground (row 168)");
+    let highest = (0..240).find(|&y| (hx..hx + 8).any(|x| with[y * 256 + x] != without[y * 256 + x])).unwrap();
+    assert_eq!(highest, hy, "the top of the hero is exactly at hero.y");
+}

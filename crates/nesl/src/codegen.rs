@@ -436,6 +436,7 @@ impl Codegen {
                 self.data.push((label, tiles));
             }
             Decl::PaletteZone { .. } => {}
+            Decl::Music { pos, .. } | Decl::Sound { pos, .. } => return self.err(*pos, "not implemented yet"),
             Decl::Metasprite { name, parts, pos } => {
                 self.define(name, *pos)?;
                 if parts.is_empty() || parts.len() > 63 {

@@ -178,6 +178,11 @@ fn runner_with_status_bar_matches_jsnes() {
 }
 
 #[test]
+fn quest_title_matches_jsnes() {
+    check("quest", &example("quest"), 40, 0);
+}
+
+#[test]
 fn scrolled_level_with_status_bar_matches_jsnes() {
     let src = format!(
         "{}

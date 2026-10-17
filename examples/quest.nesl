@@ -23,6 +23,8 @@ tile 2 = [".2.22.2.", "..2222..", "..2..2..", "..2..2..", "..2..2..", ".33..33."
 tile 3 = ["........", "..2222..", ".222222.", "2212212.", "22222222", "22222222", "2.2.2.22", "........"];
 metasprite HERO = [(0, 0, 1), (0, 8, 2)];
 
+const WORLDS: [map] = [W1, W2, W3];   // the maps are declared at the end of the file
+
 const GROUND_Y = 168;
 const START_X = 24;
 const START_Y = 120;
@@ -43,40 +45,15 @@ var world: u8;
 var state: u8;          // 0 title, 1 playing, 2 world clear, 3 game over, 4 won
 var lives: u8;
 var coins: u8;
+var score: u16;
 var hurt: u8;           // invulnerable frames after a hit
 var timer: u8;
 var prev: u8;
 var cam: u16;
 
-// ---- one world at a time: every map operation picks the current world's map
-fn tile_at(tx: u16, ty: u8) -> u8 {
-    match world {
-        0 => return map_tile(W1, tx, ty),
-        1 => return map_tile(W2, tx, ty),
-        _ => return map_tile(W3, tx, ty),
-    }
-    return 0;
-}
-
 fn solid(x: u16, y: u8) -> u8 {
-    let t = tile_at(x >> 3, y >> 3);
+    let t = map_tile(WORLDS[world], x >> 3, y >> 3);
     return t == '#' || t == '=';
-}
-
-fn take_coin(tx: u16, ty: u8) {
-    match world {
-        0 => set_map_tile(W1, tx as u8, ty, ' '),
-        1 => set_map_tile(W2, tx as u8, ty, ' '),
-        _ => set_map_tile(W3, tx as u8, ty, ' '),
-    }
-}
-
-fn follow() {
-    match world {
-        0 => camera_follow(hero.x, W1),
-        1 => camera_follow(hero.x, W2),
-        _ => camera_follow(hero.x, W3),
-    }
 }
 
 fn hide_all() {
@@ -85,7 +62,7 @@ fn hide_all() {
 
 fn spawn() {
     hero.x = START_X; hero.y = START_Y; hero.vy = 0; hero.ground = 0;
-    hurt = 0;
+    hurt = 90;          // a moment of safety after (re)spawning
     nfoes = 0;
     for k in FOE_FROM[world]..FOE_FROM[world + 1] {
         foes[nfoes].x = FOE_COL[k] << 3;
@@ -99,14 +76,16 @@ fn spawn() {
 fn start_world() {
     hide_all();
     status_bar(3);
-    match world {
-        0 => { load_palette(PAL1); draw_map(W1); }
-        1 => { load_palette(PAL2); draw_map(W2); }
-        _ => { load_palette(PAL3); draw_map(W3); }
+    match world {             // palettes cannot go in a list (yet)
+        0 => load_palette(PAL1),
+        1 => load_palette(PAL2),
+        _ => load_palette(PAL3),
     }
-    print(1, 1, "COINS");
-    print(12, 1, "LIVES");
-    print(22, 1, "WORLD");
+    draw_map(WORLDS[world]);
+    print(1, 1, "SCORE");
+    print(13, 1, "COINS");
+    print(23, 1, "L");
+    print(27, 1, "W");
     set_tile(28, 1, '1' + world);
     spawn();
     play_music(THEME, BASS, HARM);
@@ -128,8 +107,9 @@ fn show_screen(s: u8) {
 }
 
 fn new_game() {
-    lives = 3; coins = 0; world = 0;
-    reset_map(W1); reset_map(W2); reset_map(W3);
+    lives = 3; coins = 0; score = 0;
+    for w in 0..3 { reset_map(WORLDS[w]); }
+    world = 0;
     start_world();
 }
 
@@ -157,8 +137,8 @@ fn update_hero(pad: u8, pressed: u8) {
     }
     let cx = (hero.x + 4) >> 3;
     let cy = (hero.y + 8) >> 3;
-    let t = tile_at(cx, cy);
-    if t == '$' { take_coin(cx, cy); coins += 1; sfx(SFX_COIN); }
+    let t = map_tile(WORLDS[world], cx, cy);
+    if t == '$' { set_map_tile(WORLDS[world], cx, cy, ' '); coins += 1; score += 10; sfx(SFX_COIN); }
     if t == '|' { stop_music(); sfx(SFX_COIN); timer = 90; state = 2; }
     if hero.y > 216 { lose_life(); }
 }
@@ -183,6 +163,7 @@ fn update_foes() {
             if hero.vy > 0 && hero.y + 12 < foes[i].y {
                 foes[i].alive = 0;
                 hero.vy = -4;
+                score += 50;
                 sfx(SFX_HIT);
             } else if hurt == 0 {
                 hurt = 60;
@@ -206,7 +187,7 @@ fn main() {
             1 => {
                 update_hero(pad, pressed);
                 if state == 1 {
-                    follow();
+                    camera_follow(hero.x, WORLDS[world]);
                     cam = camera_x();
                     update_foes();
                 }
@@ -216,15 +197,19 @@ fn main() {
                 timer -= 1;
                 if timer == 0 {
                     world += 1;
-                    if world == 3 { show_screen(4); } else { start_world(); }
+                    if world == 3 { show_screen(4); } else {
+                        reset_map(WORLDS[world - 1]);   // free its change slots (64 shared)
+                        start_world();
+                    }
                 }
             }
         }
         if state == 1 || state == 2 {
             let hx = hero.x - cam;
             if hurt & 4 { metasprite(1, 0, 0, HERO); } else { metasprite(1, hx as u8, hero.y, HERO); }
-            print_u8(7, 1, coins);
-            set_tile(18, 1, '0' + lives);
+            print_u16(7, 1, score);
+            print_u8(19, 1, coins);
+            set_tile(24, 1, '0' + lives);
         }
     }
 }

@@ -64,6 +64,8 @@ cargo build --release
 | 自定义音效 | `sound LASER = (pulse, 0x30, 4, 10);` → `sfx(LASER)`，与 `SFX_*` 共用 |
 | 改写地图 | `set_map_tile(WORLD, tx, ty, ' ')`：读取、画面、卷轴补画都看到新值（最多 64 处）；`reset_map(WORLD)` 撤销 |
 | 状态栏 | `status_bar(3)`：顶部 2-8 行不随卷轴滚动，直接 `print` 分数（占用 0 号精灵） |
+| 地图列表 | `const WORLDS: [map] = [W1, W2, W3];` → `draw_map(WORLDS[level])`，凡是要地图的地方都能写 `WORLDS[i]` |
+| 大数字 | `print_u16(x, y, score)` 显示 5 位数（00000-65535） |
 | NES API | `wait_vblank ppu_on ppu_off load_palette vram_addr vram_put vram_fill print print_u8 sprite hide_sprite joypad scroll rand frame_count peek poke play_tone stop_sound`，按键常量 `BTN_A…BTN_RIGHT` |
 
 完整参考：[`specs/001-nesl-compiler/contracts/language.md`](specs/001-nesl-compiler/contracts/language.md)，
@@ -82,7 +84,7 @@ v2 新增内容见 [`specs/002-language-extensions/contracts/language.md`](specs
 crates/nes-sim   6502 CPU（通过 nestest 全部 5003 行官方指令校验）+ 简化 NES 测试机
 crates/nesl      编译器库：lexer → parser → codegen → assembler → CHR/iNES
 crates/nesc      CLI 与浏览器编辑器（std-only HTTP 服务 + web/index.html）
-examples/        hello / sprite / game（接星星）/ shooter（struct + i8 + match）/ maze（地图 + 元精灵 + 碰撞 + 音效）/ runner（4 屏横版跳跃 + 三声部音乐 + 状态栏）
+examples/        hello / sprite / game（接星星）/ shooter（struct + i8 + match）/ maze（地图 + 元精灵 + 碰撞 + 音效）/ runner（4 屏横版跳跃 + 三声部音乐 + 状态栏）/ quest（完整游戏：标题、3 个世界、敌人、生命与计分）
 specs/00x-…      Spec Kit 文档：spec.md（需求）plan.md（计划）tasks.md（实现任务）等
 ```
 

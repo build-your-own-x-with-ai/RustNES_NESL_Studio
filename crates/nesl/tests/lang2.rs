@@ -91,3 +91,51 @@ fn i8_errors() {
     assert!(m("var a: i8; var b: u8; fn main() { if a < b {} }").contains("type"));
     assert!(m("var a: i8; fn main() { a = a / 3; }").contains("power of 2"));
 }
+
+// ---------------------------------------------------------------- US3 typed and local arrays
+
+#[test]
+fn u16_and_i8_arrays_ram_and_const() {
+    let r = run("
+        const NOTES: [u16] = [0x1AB, 0x17C, 300];
+        const DIRS: [i8] = [-1, 0, 1];
+        var t: [u16; 4]; var o: [i8; 3]; var i: u8 = 1; var sum: u16; var x: u8 = 10;
+        fn main() {
+            t[0] = 1000; t[i] = NOTES[2] + 1; t[2] += 2000; t[i + 2] = t[0] + t[1];
+            for k in 0..3 { o[k] = DIRS[k]; x += DIRS[k] * 4; sum += NOTES[k]; }
+            play_tone(NOTES[i]);
+        }");
+    let t = r.bytes("t");
+    let get = |k: usize| t[k] as u16 | (t[k + 4] as u16) << 8;
+    assert_eq!((get(0), get(1), get(2), get(3)), (1000, 301, 2000, 1301));
+    assert_eq!(r.bytes("o"), vec![0xFF, 0, 1]);
+    assert_eq!(r.u16("sum"), 0x1AB + 0x17C + 300);
+    assert_eq!(r.u8("x"), 10);
+    let w = &r.nes.bus.apu_writes;
+    assert!(w.contains(&(0x4002, 0x7C)) && w.contains(&(0x4003, 0x01)), "{w:x?}");
+}
+
+#[test]
+fn local_arrays_and_structs_are_zeroed_each_call() {
+    let r = run("
+        struct P { a: u8, b: u16 }
+        var first: u8; var second: u8; var pb: u16;
+        fn f() -> u8 {
+            let buf: [u8; 4]; let p: P;
+            let s: u8 = 0;
+            for i in 0..4 { s += buf[i]; buf[i] = i + 1; }
+            p.b += 500; pb = p.b;
+            return s;
+        }
+        fn main() { first = f(); second = f(); }");
+    assert_eq!((r.u8("first"), r.u8("second")), (0, 0));
+    assert_eq!(r.u16("pb"), 500);
+}
+
+#[test]
+fn typed_array_errors() {
+    let m = |src: &str| errors(src)[0].message.clone();
+    assert!(m("const N: [u16] = [1]; fn main() { print(0, 0, N); }").contains("string"));
+    assert!(m("var t: [u16; 2]; var a: u8; fn main() { a = t[0]; }").contains("as u8"));
+    assert!(m("fn main() { let b: [u8; 2] = 3; }").contains("initializer"));
+}

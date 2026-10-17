@@ -10,6 +10,21 @@ pub const CONSTANTS: &[(&str, u32)] = &[
     ("BTN_DOWN", 0x04),
     ("BTN_LEFT", 0x02),
     ("BTN_RIGHT", 0x01),
+    ("SFX_JUMP", 0),
+    ("SFX_COIN", 1),
+    ("SFX_SHOOT", 2),
+    ("SFX_HIT", 3),
+    ("SFX_EXPLODE", 4),
+];
+
+/// Built-in sound effects, 8 bytes each:
+/// `[channel (0 = pulse 2, 1 = noise), period lo, period hi, delta (i8), frames, max volume, duty bits, pad]`.
+const SFX_TABLE: [[u8; 8]; 5] = [
+    [0, 0xC8, 0x00, 0xFA, 16, 12, 0xB0, 0], // JUMP: rising sweep
+    [0, 0x50, 0x00, 0x00, 12, 10, 0x70, 0], // COIN: bright blip
+    [0, 0x30, 0x00, 0x08, 8, 12, 0x30, 0],  // SHOOT: short falling zap
+    [0, 0x40, 0x01, 0x06, 12, 15, 0xF0, 0], // HIT: low thud
+    [1, 0x0C, 0x00, 0x00, 30, 15, 0x30, 0], // EXPLODE: noise burst
 ];
 
 pub fn constant(name: &str) -> Option<u32> {
@@ -65,6 +80,7 @@ pub fn signature(name: &str) -> Option<Signature> {
         "map_tile" => sig!(Map, U8, U8 => U8),
         "metasprite" => sig!(U8, U8, U8, Meta => U8),
         "collide" => sig!(U8, U8, U8, U8, U8, U8, U8, U8 => U8),
+        "sfx" => sig!(U8 => None),
         _ => return None,
     })
 }
@@ -88,7 +104,13 @@ impl Codegen {
             "rand" => self.e.jsr("__rand"),
             "stop_sound" => {
                 self.e.imm(LDA, 0);
+                self.e.abs(STA, SFX_TIMER);
+                self.e.abs(STA, APU_EN);
                 self.e.abs(STA, 0x4015);
+            }
+            "sfx" => {
+                self.arg(&args[0], Type::U8)?;
+                self.e.jsr("__sfx");
             }
             "vram_put" => {
                 self.arg(&args[0], Type::U8)?;
@@ -710,7 +732,9 @@ pub fn emit_runtime(e: &mut Emitter) {
     // A:X = 11-bit timer period for pulse channel 1
     e.label("__play_tone");
     e.imp(PHA);
-    e.imm(LDA, 0x01);
+    e.abs(LDA, APU_EN);
+    e.imm(ORA, 0x01);
+    e.abs(STA, APU_EN);
     e.abs(STA, 0x4015);
     e.imm(LDA, 0xBF); // 50% duty, length halt, constant volume 15
     e.abs(STA, 0x4000);
@@ -722,4 +746,85 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.imm(AND, 0x07);
     e.abs(STA, 0x4003);
     e.imp(RTS);
+
+    e.comment("---- runtime: sound effects ----");
+    // A = effect id (masked to the table). The timer is cleared first and set last so an
+    // NMI arriving mid-setup never ticks a half-written effect.
+    e.label("__sfx");
+    e.imm(AND, 0x07);
+    e.imm(CMP, SFX_TABLE.len() as u8);
+    e.br(BCS, "__sfx_done");
+    e.acc(ASL);
+    e.acc(ASL);
+    e.acc(ASL);
+    e.imp(TAX);
+    e.imm(LDA, 0);
+    e.abs(STA, SFX_TIMER);
+    for (off, dst) in [(0u16, SFX_CH), (1, SFX_PLO), (3, SFX_DELTA), (5, SFX_MAXVOL), (6, SFX_DUTY)] {
+        e.ins(LDA, Operand::AbsX(crate::asm::Val::Label("__sfx_table".into(), off as i32)));
+        e.abs(STA, dst);
+    }
+    e.abs(LDA, SFX_CH);
+    e.br(BNE, "__sfx_noise");
+    e.imm(LDA, 0x08); // sweep off
+    e.abs(STA, 0x4005);
+    e.ins(LDA, Operand::AbsX(crate::asm::Val::Label("__sfx_table".into(), 2)));
+    e.abs(STA, 0x4007);
+    e.imm(LDA, 0x02);
+    e.jmp("__sfx_enable");
+    e.label("__sfx_noise");
+    e.imm(LDA, 0);
+    e.abs(STA, 0x400F);
+    e.imm(LDA, 0x08);
+    e.label("__sfx_enable");
+    e.abs(ORA, APU_EN);
+    e.abs(STA, APU_EN);
+    e.abs(STA, 0x4015);
+    e.ins(LDA, Operand::AbsX(crate::asm::Val::Label("__sfx_table".into(), 4)));
+    e.abs(STA, SFX_TIMER);
+    e.label("__sfx_done");
+    e.imp(RTS);
+
+    // Called by the NMI every frame: volume = min(frames left, max), period += delta.
+    e.label("__sfx_tick");
+    e.abs(LDA, SFX_TIMER);
+    e.br(BEQ, "__sfx_done");
+    e.abs(DEC, SFX_TIMER);
+    e.br(BEQ, "__sfx_off");
+    e.abs(LDA, SFX_TIMER);
+    e.abs(CMP, SFX_MAXVOL);
+    e.br(BCC, "__sfx_vol");
+    e.abs(LDA, SFX_MAXVOL);
+    e.label("__sfx_vol");
+    e.abs(ORA, SFX_DUTY);
+    e.abs(LDX, SFX_CH);
+    e.br(BNE, "__sfx_tick_noise");
+    e.abs(STA, 0x4004);
+    e.abs(LDA, SFX_PLO);
+    e.imp(CLC);
+    e.abs(ADC, SFX_DELTA);
+    e.abs(STA, SFX_PLO);
+    e.abs(STA, 0x4006);
+    e.imp(RTS);
+    e.label("__sfx_tick_noise");
+    e.abs(STA, 0x400C);
+    e.abs(LDA, SFX_PLO);
+    e.imm(AND, 0x0F);
+    e.abs(STA, 0x400E);
+    e.imp(RTS);
+    e.label("__sfx_off");
+    e.abs(LDA, SFX_CH);
+    e.br(BNE, "__sfx_off_noise");
+    e.imm(LDA, !0x02u8);
+    e.jmp("__sfx_off_write");
+    e.label("__sfx_off_noise");
+    e.imm(LDA, !0x08u8);
+    e.label("__sfx_off_write");
+    e.abs(AND, APU_EN);
+    e.abs(STA, APU_EN);
+    e.abs(STA, 0x4015);
+    e.imp(RTS);
+
+    e.label("__sfx_table");
+    e.items.push(crate::asm::Item::Bytes(SFX_TABLE.concat()));
 }

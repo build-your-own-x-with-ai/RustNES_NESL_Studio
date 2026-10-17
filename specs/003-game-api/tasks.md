@@ -39,8 +39,8 @@ description: "Task list for game development API"
 
 ## Phase 7: US5 sfx (P3)
 
-- [ ] T312 [US5] 测试：音量衰减、周期滑动、结束静音、噪声通道、与 play_tone 共存
-- [ ] T313 [US5] 实现：音效表、NMI tick、`APU_EN` 影子
+- [x] T312 [US5] 测试：音量衰减、周期滑动、结束静音、噪声通道、与 play_tone 共存
+- [x] T313 [US5] 实现：音效表、NMI tick、`APU_EN` 影子
 
 ## Phase 8: Polish
 

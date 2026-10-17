@@ -34,6 +34,15 @@ pub const VQ_SIZE: u8 = 96;
 pub const PRINT_BUF: u16 = 0x0360; // 3 bytes used by print_u8 / set_tile
 /// Non-zero while the main program is appending to the queue; NMI then skips the flush.
 pub const VQ_LOCK: u16 = 0x0363;
+// Sound effect state, advanced once per frame by the NMI.
+pub const SFX_TIMER: u16 = 0x0364;
+pub const SFX_CH: u16 = 0x0365; // 0 = pulse 2, otherwise noise
+pub const SFX_PLO: u16 = 0x0366;
+pub const SFX_DELTA: u16 = 0x0367;
+pub const SFX_MAXVOL: u16 = 0x0368;
+pub const SFX_DUTY: u16 = 0x0369;
+/// Shadow of $4015 (bit 0 = play_tone's pulse 1, bit 1 = pulse 2, bit 3 = noise).
+pub const APU_EN: u16 = 0x036A;
 pub const USER_RAM_START: u16 = 0x0370;
 pub const USER_RAM_END: u16 = 0x0800;
 
@@ -162,6 +171,7 @@ pub fn emit_core(e: &mut Emitter) {
     e.abs(LDA, SCROLL_Y);
     e.abs(STA, PPUSCROLL);
     e.label("__nmi_skip");
+    e.jsr("__sfx_tick");
     e.abs(INC, FRAME);
     e.imp(PLA);
     e.imp(TAY);

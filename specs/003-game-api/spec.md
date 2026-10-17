@@ -130,7 +130,7 @@
 - **VRAM 队列**：RAM `$0300-$035F`，条目格式 `[addr_hi, addr_lo, len, bytes...]`；零页 `VQ_LEN` 为已提交长度（最后一步写入，保证 NMI 只看到完整条目）。
 - **Map**：ROM 中 960 字节（30×32）。
 - **Metasprite**：ROM 中 `[count, (dx, dy, tile, attr)×count]`。
-- **SFX 表**：每项 7 字节 `[channel, period_lo, period_hi, delta(i8), frames, max_vol, duty]`。
+- **SFX 表**：每项 8 字节 `[channel, period_lo, period_hi, delta(i8), frames, max_vol, duty, pad]`（按 8 对齐便于用移位计算偏移）。
 
 ## Success Criteria *(mandatory)*
 

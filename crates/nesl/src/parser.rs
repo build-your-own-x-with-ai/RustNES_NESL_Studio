@@ -201,6 +201,63 @@ impl Parser {
                 Ok(Decl::Struct { name, fields, pos })
             }
             // `map` and `metasprite` are contextual: only `map NAME =` at the top level declares one.
+            Tok::Ident(kw) if (kw == "music" || kw == "sound") && self.is_decl_head() => {
+                let is_music = kw == "music";
+                self.advance();
+                let name = self.ident()?;
+                self.expect_sym("=")?;
+                let decl = if is_music {
+                    let mut parts = Vec::new();
+                    let bracketed = self.eat_sym("[");
+                    loop {
+                        let spos = self.pos();
+                        match self.peek().clone() {
+                            Tok::Str(b) => {
+                                self.advance();
+                                parts.push((String::from_utf8_lossy(&b).into_owned(), spos));
+                            }
+                            t if !(bracketed && self.is_sym("]")) => {
+                                return self.err(format!("expected music string, found {}", describe(&t)));
+                            }
+                            _ => {}
+                        }
+                        if !bracketed || !self.eat_sym(",") || self.is_sym("]") {
+                            break;
+                        }
+                    }
+                    if bracketed {
+                        self.expect_sym("]")?;
+                    }
+                    Decl::Music { name, parts, pos }
+                } else {
+                    let tpos = self.pos();
+                    self.expect_sym("(")?;
+                    let channel = match self.peek().clone() {
+                        Tok::Ident(c) => {
+                            self.advance();
+                            (c, self.toks[self.i - 1].pos)
+                        }
+                        t => return self.err(format!("expected sound channel `pulse` or `noise`, found {}", describe(&t))),
+                    };
+                    let mut args = Vec::new();
+                    while self.eat_sym(",") {
+                        if self.is_sym(")") {
+                            break;
+                        }
+                        args.push(self.expr()?);
+                    }
+                    self.expect_sym(")")?;
+                    if !(3..=5).contains(&args.len()) {
+                        return Err(Diagnostic::new(
+                            tpos,
+                            "a sound is (channel, period, delta, frames[, volume[, duty]])",
+                        ));
+                    }
+                    Decl::Sound { name, channel, args, pos }
+                };
+                self.expect_sym(";")?;
+                Ok(decl)
+            }
             Tok::Ident(kw) if (kw == "map" || kw == "metasprite" || kw == "palette_zone") && self.is_decl_head() => {
                 let kind = kw.clone();
                 let is_map = kind != "metasprite";

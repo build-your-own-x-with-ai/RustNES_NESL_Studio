@@ -14,7 +14,7 @@ description: "Task list for music and custom sound effects"
 
 ## Phase 2: Foundational
 
-- [ ] T502 测试 + 实现：parser `music` / `sound` 上下文声明 `crates/nesl/src/{ast,parser}.rs`
+- [x] T502 测试 + 实现：parser `music` / `sound` 上下文声明 `crates/nesl/src/{ast,parser}.rs`
 
 ## Phase 3: US1 旋律 (P1) 🎯 MVP
 

@@ -89,3 +89,25 @@ fn picking_a_palette_colour_changes_the_palette_data() {
     assert_eq!(rom_byte(&nesl::compile(&after).unwrap(), "d_PAL", 1), 0x2A);
     assert_eq!(before.lines().count(), after.lines().count());
 }
+
+/// The page's inline script must parse, load studio.js, and only look up element ids
+/// that exist (a typo would otherwise only show up as a blank panel in the browser).
+#[test]
+fn the_page_script_parses_and_its_element_ids_exist() {
+    let html = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("web/index.html")).unwrap();
+    assert!(html.contains("<script src=\"/studio.js\"></script>"));
+    let start = html.rfind("<script>").unwrap() + "<script>".len();
+    let script = &html[start..html.rfind("</script>").unwrap()];
+    for part in script.split("$(\"").skip(1) {
+        let id = &part[..part.find('"').unwrap()];
+        assert!(html.contains(&format!("id=\"{id}\"")), "the script uses #{id}, which is not in the page");
+    }
+    if !node_available() {
+        eprintln!("page script syntax check skipped: `node` not found");
+        return;
+    }
+    let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("studio-page.js");
+    std::fs::write(&path, script).unwrap();
+    let out = Command::new("node").arg("--check").arg(&path).output().unwrap();
+    assert!(out.status.success(), "page script: {}", String::from_utf8_lossy(&out.stderr));
+}

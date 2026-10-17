@@ -30,7 +30,7 @@ description: "Task list for music and custom sound effects"
 
 ## Phase 5: US3 自定义音效 (P2)
 
-- [ ] T509 [US3] 测试：sound 声明写寄存器、噪声、参数错误
+- [x] T509 [US3] 测试：sound 声明写寄存器、噪声、参数错误
 - [x] T510 [US3] 实现：音效表移入代码生成、`sound` 常量
 
 ## Phase 6: US4 共存 (P2)

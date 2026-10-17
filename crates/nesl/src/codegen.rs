@@ -31,6 +31,8 @@ pub(crate) enum Sym {
     Map { label: String, width: u8, id: u8 },
     /// A song: 2-byte events at `label`; `lowest` is used for per-voice range checks.
     Music { label: String, lowest: Option<(u8, Pos)> },
+    /// `const L: [map]`: map ids (1-based) stored at `label`.
+    MapList { label: String, ids: Vec<u8> },
     /// A metasprite table in ROM: `[count, (dx, dy, tile, attr)...]`.
     Metasprite { label: String },
 }
@@ -57,6 +59,9 @@ pub struct Codegen {
     /// User `sound` effects, appended to the built-in table (ids 5, 6, ...).
     sounds: Vec<[u8; 8]>,
     map_count: u8,
+    /// (tile label, width) for map id 1, 2, ...; used by map lists.
+    pub(crate) map_table: Vec<(String, u8)>,
+    has_map_lists: bool,
     scopes: Vec<HashMap<String, Sym>>,
     /// (continue label, break label) for each enclosing loop.
     loops: Vec<(String, String)>,
@@ -185,6 +190,8 @@ impl Codegen {
             zones: HashMap::new(),
             sounds: Vec::new(),
             map_count: 0,
+            map_table: Vec::new(),
+            has_map_lists: false,
             scopes: Vec::new(),
             loops: Vec::new(),
             cur_ret: None,
@@ -242,6 +249,14 @@ impl Codegen {
                 self.errors.push(e);
             }
         }
+        // Map lists after all maps, so a list may name maps declared later.
+        for d in &prog.items {
+            if let Decl::MapList { name, maps, pos } = d {
+                if let Err(e) = self.declare_map_list(name, maps, *pos) {
+                    self.errors.push(e);
+                }
+            }
+        }
         let mut orphans: Vec<_> = self
             .zones
             .iter()
@@ -283,6 +298,9 @@ impl Codegen {
             }
         }
 
+        if self.has_map_lists {
+            self.emit_map_select();
+        }
         self.e.comment("---- sound effect table ----");
         let mut table: Vec<[u8; 8]> = builtins::SFX_TABLE.to_vec();
         table.extend(std::mem::take(&mut self.sounds));
@@ -420,6 +438,66 @@ impl Codegen {
         Ok(out)
     }
 
+    fn declare_map_list(&mut self, name: &str, maps: &[(String, Pos)], pos: Pos) -> R<()> {
+        self.define(name, pos)?;
+        if maps.is_empty() || maps.len() > 255 {
+            return self.err(pos, "a map list needs 1 to 255 maps");
+        }
+        let mut ids = Vec::new();
+        for (m, mpos) in maps {
+            match self.globals.get(m) {
+                Some(Sym::Map { id, .. }) => ids.push(*id),
+                Some(_) => return self.err(*mpos, format!("`{m}` is not a map")),
+                None => return self.err(*mpos, format!("unknown map `{m}`")),
+            }
+        }
+        let label = format!("ml_{name}");
+        self.data.push((label.clone(), ids.clone()));
+        self.globals.insert(name.to_string(), Sym::MapList { label, ids });
+        self.has_map_lists = true;
+        Ok(())
+    }
+
+    /// `__map_sel`: A = map id -> PTR = tiles, PTR2 = attributes, SEL_ID, SEL_W.
+    /// An invalid id (0 or past the last map) selects map 1.
+    fn emit_map_select(&mut self) {
+        use crate::asm::{Item, Val};
+        let count = self.map_table.len().min(254) as u8;
+        self.e.comment("---- map lists ----");
+        self.e.label("__map_sel");
+        self.e.imm(CMP, 0);
+        self.e.br(BEQ, "__msel_fix");
+        self.e.imm(CMP, count + 1);
+        self.e.br(BCC, "__msel_ok");
+        self.e.label("__msel_fix");
+        self.e.imm(LDA, 1);
+        self.e.label("__msel_ok");
+        self.e.abs(STA, runtime::SEL_ID);
+        self.e.imp(SEC);
+        self.e.imm(SBC, 1);
+        self.e.acc(ASL);
+        self.e.imp(TAX);
+        for (table, dst) in [("__map_tab_t", runtime::PTR), ("__map_tab_a", runtime::PTR2)] {
+            self.e.ins(LDA, Operand::AbsX(Val::Label(table.into(), 0)));
+            self.e.abs(STA, dst);
+            self.e.ins(LDA, Operand::AbsX(Val::Label(table.into(), 1)));
+            self.e.abs(STA, dst + 1);
+        }
+        self.e.abs(LDX, runtime::SEL_ID);
+        self.e.ins(LDA, Operand::AbsX(Val::Label("__map_tab_w".into(), -1)));
+        self.e.abs(STA, runtime::SEL_W);
+        self.e.imp(RTS);
+        let tiles = self.map_table.iter().map(|(l, _)| Val::Label(l.clone(), 0)).collect();
+        let attrs = self.map_table.iter().map(|(l, _)| Val::Label(format!("{l}_a"), 0)).collect();
+        let widths = self.map_table.iter().map(|(_, w)| *w).collect();
+        self.e.label("__map_tab_t");
+        self.e.items.push(Item::Words(tiles));
+        self.e.label("__map_tab_a");
+        self.e.items.push(Item::Words(attrs));
+        self.e.label("__map_tab_w");
+        self.e.items.push(Item::Bytes(widths));
+    }
+
     fn const_expr(&self, e: &Expr, what: &str) -> R<i64> {
         self.const_val(e).ok_or_else(|| Diagnostic::new(e.pos, format!("{what} must be a constant expression")))
     }
@@ -518,10 +596,11 @@ impl Codegen {
                 self.map_count += 1;
                 let id = self.map_count;
                 self.globals.insert(name.clone(), Sym::Map { label: label.clone(), width: width as u8, id });
+                self.map_table.push((label.clone(), width as u8));
                 self.data.push((format!("{label}_a"), attrs));
                 self.data.push((label, tiles));
             }
-            Decl::PaletteZone { .. } => {}
+            Decl::PaletteZone { .. } | Decl::MapList { .. } => {}
             Decl::Music { name, parts, pos } => {
                 self.define(name, *pos)?;
                 if parts.is_empty() {
@@ -769,6 +848,7 @@ impl Codegen {
                 Some(Sym::Struct(_)) => self.err(e.pos, format!("`{name}` is a struct; access a field with `{name}.field`")),
                 Some(Sym::StructArray(_)) => self.err(e.pos, format!("`{name}` is a struct array; access a field with `{name}[i].field`")),
                 Some(Sym::Map { .. }) => self.err(e.pos, format!("`{name}` is a map; use `draw_map({name})` or `map_tile({name}, x, y)`")),
+                Some(Sym::MapList { .. }) => self.err(e.pos, format!("`{name}` is a list of maps; pass one with `{name}[i]` to draw_map, map_tile, ...")),
                 Some(Sym::Music { .. }) => self.err(e.pos, format!("`{name}` is music; play it with `play_music({name})`")),
                 Some(Sym::Metasprite { .. }) => self.err(e.pos, format!("`{name}` is a metasprite; draw it with `metasprite(slot, x, y, {name})`")),
                 Some(Sym::Const(_)) => unreachable!(),
@@ -825,6 +905,9 @@ impl Codegen {
         match self.lookup(name) {
             Some(Sym::Array { addr, len, elem }) => Ok((Val::Num(addr), len, elem)),
             Some(Sym::Data { label, len, elem }) => Ok((Val::Label(label.clone(), 0), len, elem)),
+            Some(Sym::MapList { .. }) => {
+                self.err(pos, format!("`{name}` is a list of maps; `{name}[i]` can only be passed to map functions such as draw_map"))
+            }
             Some(_) => self.err(pos, format!("`{name}` is not an array")),
             None => Err(self.unknown_var(name, pos)),
         }
@@ -1010,7 +1093,7 @@ impl Codegen {
         Ok(())
     }
 
-    fn index_to_x(&mut self, idx: &Expr) -> R<()> {
+    pub(crate) fn index_to_x(&mut self, idx: &Expr) -> R<()> {
         if self.ty(idx)? != Type::U8 {
             return self.err(idx.pos, "array index must be u8");
         }

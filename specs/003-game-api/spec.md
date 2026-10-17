@@ -135,7 +135,7 @@
 ## Success Criteria *(mandatory)*
 
 - **SC-301**: 示例游戏在主循环任意位置 `print`，测试机统计到的渲染期 VRAM 写入为 0。
-- **SC-302**: 一个带墙壁、16×16 主角、碰撞和音效的迷宫示例 ≤ 120 行 NESL。
+- **SC-302**: 一个带墙壁、16×16 主角、碰撞和音效的迷宫示例 ≤ 120 行 NESL 逻辑代码（不含地图行与 `tile` 像素定义）。实测 `examples/maze.nesl` 为 97 行。
 - **SC-303**: `cargo test --workspace` 全绿，001/002 无回归。
 
 ## Assumptions

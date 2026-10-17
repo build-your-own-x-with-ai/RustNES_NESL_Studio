@@ -242,3 +242,9 @@ fn sfx_and_play_tone_play_together_and_stop_sound_stops_both() {
 fn every_sfx_constant_compiles() {
     build("fn main() { sfx(SFX_JUMP); sfx(SFX_COIN); sfx(SFX_SHOOT); sfx(SFX_HIT); sfx(SFX_EXPLODE); }");
 }
+
+#[test]
+fn a_bad_map_reports_one_error_not_one_per_use() {
+    let errs = errors(&format!("map M = [\"{}\"]; fn main() {{ draw_map(M); draw_map(M); }}", "#".repeat(33)));
+    assert_eq!(errs.len(), 1, "{errs:?}");
+}

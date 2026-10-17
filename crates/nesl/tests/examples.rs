@@ -48,3 +48,24 @@ fn shooter_fires_and_moves() {
     assert!(nes.peek(out.vars["ship_x"].addr) > 120);
     assert_eq!(nes.peek(out.vars["shot.active"].addr), 1);
 }
+
+#[test]
+fn maze_hero_walks_collects_coins_and_never_glitches() {
+    let out = build(&example("maze"));
+    let mut nes = TestNes::from_ines(&out.rom).unwrap();
+    let v = |nes: &TestNes, n: &str| nes.peek(out.vars[n].addr);
+    nes.run_frames(10).unwrap();
+    assert_eq!(&nes.bus.vram[0x2000 + 3 * 32..][..32], &[b'#'; 32], "map drawn");
+    assert_eq!(v(&nes, "left"), v(&nes, "ncoins"));
+    assert!(v(&nes, "ncoins") >= 10);
+    // Walk up-left into the top-left coin at tile (1, 4).
+    nes.set_buttons(0, 0x08 | 0x02);
+    nes.run_frames(30).unwrap();
+    assert_eq!(v(&nes, "score"), 1, "coin collected");
+    assert_eq!(nes.bus.vram[0x2000 + 4 * 32 + 1], b' ', "coin erased from the screen");
+    assert!(v(&nes, "hero.x") >= 8 && v(&nes, "hero.y") >= 32, "walls stop the hero");
+    // Wander for a while: whatever happens, VRAM is only written in vblank.
+    nes.set_buttons(0, 0x01 | 0x04);
+    nes.run_frames(400).unwrap();
+    assert_eq!(nes.bus.render_conflicts, 0);
+}

@@ -11,6 +11,7 @@ pub const EXAMPLES: &[(&str, &str)] = &[
     ("sprite", include_str!("../../../examples/sprite.nesl")),
     ("game", include_str!("../../../examples/game.nesl")),
     ("shooter", include_str!("../../../examples/shooter.nesl")),
+    ("maze", include_str!("../../../examples/maze.nesl")),
 ];
 
 #[derive(Debug)]

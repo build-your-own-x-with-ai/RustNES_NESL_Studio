@@ -152,6 +152,11 @@ impl Codegen {
         }
         for d in &prog.items {
             if let Err(e) = self.declare(d) {
+                // Keep the name defined so later uses do not cascade into
+                // misleading "unknown" errors.
+                if let Decl::Map { name, .. } = d {
+                    self.globals.entry(name.clone()).or_insert(Sym::Map { label: "__bad_map".into() });
+                }
                 self.errors.push(e);
             }
         }

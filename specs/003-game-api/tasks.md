@@ -44,6 +44,6 @@ description: "Task list for game development API"
 
 ## Phase 8: Polish
 
-- [ ] T314 [P] 示例 `examples/maze.nesl` + 端到端测试；编辑器示例与高亮
-- [ ] T315 [P] README / 语言参考更新；clippy 清零
-- [ ] T316 合并到 `main`
+- [x] T314 [P] 示例 `examples/maze.nesl` + 端到端测试；编辑器示例与高亮
+- [x] T315 [P] README / 语言参考更新；clippy 清零
+- [x] T316 合并到 `main`

@@ -71,6 +71,22 @@ pub const VOICES: [u16; 3] = [0x0380, 0x0388, 0x0390];
 pub const MU_ON: u16 = 0x0398; // bit per playing voice
 pub const MU_NOTE: u16 = 0x0399;
 pub const MU_ARG: u16 = 0x039A;
+// Editable maps (006) and the status bar.
+pub const OV_COUNT: u16 = 0x039B;
+pub const STATUS_ROWS: u16 = 0x039C;
+/// Map drawn / followed last (1-based declaration number, 0 = none).
+pub const MAP_ID: u16 = 0x039D;
+pub const OV_RES: u16 = 0x039E;
+pub const STATUS_TMP: u16 = 0x039F;
+/// The change list below is only reserved (user RAM moves to `OV_END`) when the
+/// program calls `set_map_tile`; otherwise `OV_COUNT` stays 0 and it is never touched.
+pub const COL_BUF: u16 = 0x03A0; // 30 bytes
+pub const OV_MAX: u8 = 64;
+pub const OV_ID: u16 = 0x03BE;
+pub const OV_COL: u16 = OV_ID + OV_MAX as u16;
+pub const OV_ROW: u16 = OV_COL + OV_MAX as u16;
+pub const OV_TILE: u16 = OV_ROW + OV_MAX as u16;
+pub const OV_END: u16 = OV_TILE + OV_MAX as u16;
 pub const USER_RAM_START: u16 = 0x03A0;
 pub const USER_RAM_END: u16 = 0x0800;
 
@@ -189,6 +205,10 @@ pub fn emit_core(e: &mut Emitter) {
     e.br(BNE, "__nmi_no_flush");
     e.jsr("__vq_flush");
     e.label("__nmi_no_flush");
+    e.abs(LDA, STATUS_ROWS);
+    e.br(BEQ, "__nmi_no_status");
+    e.jsr("__status_nmi"); // sprite-0 marker: OAM slot 0 and its background cell
+    e.label("__nmi_no_status");
     e.imm(LDA, 0);
     e.abs(STA, OAMADDR);
     e.imm(LDA, (OAM_SHADOW >> 8) as u8);
@@ -200,6 +220,18 @@ pub fn emit_core(e: &mut Emitter) {
     e.abs(LDA, SCROLL_X);
     e.abs(STA, LAST_SX);
     e.label("__nmi_last_scroll");
+    e.abs(BIT, PPUSTATUS); // reset the $2005 toggle (the split leaves it after one write)
+    e.abs(LDA, STATUS_ROWS);
+    e.br(BEQ, "__nmi_scroll_cam");
+    // Status bar: the top of the picture is drawn unscrolled from nametable 0.
+    e.abs(LDA, LAST_CTRL);
+    e.imm(AND, 0xFE);
+    e.abs(STA, PPUCTRL);
+    e.imm(LDA, 0);
+    e.abs(STA, PPUSCROLL);
+    e.abs(STA, PPUSCROLL);
+    e.jmp("__nmi_skip");
+    e.label("__nmi_scroll_cam");
     e.abs(LDA, LAST_CTRL);
     e.abs(STA, PPUCTRL);
     e.abs(LDA, LAST_SX);
@@ -209,6 +241,13 @@ pub fn emit_core(e: &mut Emitter) {
     e.label("__nmi_skip");
     e.jsr("__sfx_tick");
     e.jsr("__music_tick");
+    e.abs(LDA, MASK_SHADOW);
+    e.imm(AND, 0x18);
+    e.br(BEQ, "__nmi_no_split");
+    e.abs(LDA, STATUS_ROWS);
+    e.br(BEQ, "__nmi_no_split");
+    e.jsr("__status_split");
+    e.label("__nmi_no_split");
     e.abs(INC, FRAME);
     e.imp(PLA);
     e.imp(TAY);

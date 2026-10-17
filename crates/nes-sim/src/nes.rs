@@ -10,6 +10,12 @@ pub const OAM_DMA_CYCLES: u64 = 513;
 /// CPU cycles of vblank after each frame boundary (20 scanlines) in which VRAM may be written.
 pub const VBLANK_CYCLES: u64 = 2273;
 
+/// CPU cycle (relative to the frame boundary) at which the PPU draws pixel (x, y):
+/// vblank, then the pre-render line, then 341 dots per line at 3 dots per CPU cycle.
+pub fn pixel_cycle(x: u8, y: u8) -> u64 {
+    VBLANK_CYCLES + (341 * (1 + y as u64) + x as u64) / 3
+}
+
 pub struct NesBus {
     pub ram: [u8; 0x800],
     pub prg: Vec<u8>,
@@ -26,6 +32,13 @@ pub struct NesBus {
     pub render_conflicts: u64,
     /// CPU cycle at which the current instruction started (set by `TestNes::step`).
     pub now: u64,
+    /// Absolute CPU cycle of this frame's sprite-0 hit, latched when rendering starts.
+    pub sprite0_at: Option<u64>,
+    /// Cycle at which the sprite-0 flag clears (the next pre-render line).
+    pub sprite0_clear: u64,
+    /// `(cycle, kind, value)` for every PPUCTRL / PPUSCROLL write:
+    /// kind 0 = `$2000`, 1 = `$2005` x, 2 = `$2005` y.
+    pub reg_log: Vec<(u64, u8, u8)>,
     oam_addr: u8,
     write_toggle: bool,
     ppu_addr: u16,
@@ -51,6 +64,9 @@ impl NesBus {
             apu_writes: Vec::new(),
             render_conflicts: 0,
             now: 0,
+            sprite0_at: None,
+            sprite0_clear: 0,
+            reg_log: Vec::new(),
             oam_addr: 0,
             write_toggle: false,
             ppu_addr: 0,
@@ -121,6 +137,52 @@ impl NesBus {
         0x40 | bit
     }
 
+    /// Whether the background pixel at screen (x, y) is opaque, for the current scroll.
+    fn bg_opaque(&self, x: u8, y: u8) -> bool {
+        let wx = (self.ppuctrl as u16 & 1) * 256 + self.scroll.0 as u16 + x as u16;
+        let mut wy = self.scroll.1 as u16 + y as u16;
+        if wy >= 240 {
+            wy -= 240; // vertical mirroring: the vertical nametable bit has no effect
+        }
+        let nt = 0x2000 + ((wx >> 8) & 1) * 0x400; // vertical mirroring
+        let tile = self.vram[(nt + (wy / 8) * 32 + (wx & 0xFF) / 8) as usize] as u16;
+        let base = if self.ppuctrl & 0x10 != 0 { 0x1000 } else { 0 };
+        let a = (base + tile * 16 + wy % 8) as usize;
+        let bit = 0x80 >> (wx % 8);
+        (self.vram[a] | self.vram[a + 8]) & bit != 0
+    }
+
+    /// First screen pixel where an opaque pixel of sprite 0 (8x8) overlaps an opaque
+    /// background pixel, in scanline order. Pixel x = 255 never counts (as on hardware).
+    pub fn sprite0_hit(&self) -> Option<(u8, u8)> {
+        if self.ppumask & 0x18 != 0x18 {
+            return None;
+        }
+        let [y, tile, attr, x] = [self.oam[0], self.oam[1], self.oam[2], self.oam[3]];
+        let base = if self.ppuctrl & 0x08 != 0 { 0x1000 } else { 0 };
+        for r in 0..8u16 {
+            let sy = y as u16 + 1 + r;
+            if sy >= 240 {
+                break;
+            }
+            let row = if attr & 0x80 != 0 { 7 - r } else { r };
+            let a = (base + tile as u16 * 16 + row) as usize;
+            let bits = self.vram[a] | self.vram[a + 8];
+            for c in 0..8u16 {
+                let sx = x as u16 + c;
+                if sx >= 255 {
+                    break;
+                }
+                let clipped = sx < 8 && self.ppumask & 0x06 != 0x06;
+                let bit = if attr & 0x40 != 0 { 1 << c } else { 0x80 >> c };
+                if !clipped && bits & bit != 0 && self.bg_opaque(sx as u8, sy as u8) {
+                    return Some((sx as u8, sy as u8));
+                }
+            }
+        }
+        None
+    }
+
     fn check_vram_access(&mut self) {
         let rendering = self.ppumask & 0x18 != 0;
         let in_vblank = self.now % CYCLES_PER_FRAME < VBLANK_CYCLES;
@@ -146,7 +208,8 @@ impl Bus for NesBus {
             0x2000..=0x3FFF => match addr & 7 {
                 2 => {
                     self.write_toggle = false;
-                    0x80
+                    let hit = self.sprite0_at.is_some_and(|h| self.now >= h && self.now < self.sprite0_clear);
+                    0x80 | if hit { 0x40 } else { 0 }
                 }
                 4 => self.oam[self.oam_addr as usize],
                 7 => {
@@ -175,7 +238,10 @@ impl Bus for NesBus {
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF] = val,
             0x2000..=0x3FFF => match addr & 7 {
-                0 => self.ppuctrl = val,
+                0 => {
+                    self.ppuctrl = val;
+                    self.reg_log.push((self.now, 0, val));
+                }
                 1 => self.ppumask = val,
                 3 => self.oam_addr = val,
                 4 => {
@@ -183,6 +249,7 @@ impl Bus for NesBus {
                     self.oam_addr = self.oam_addr.wrapping_add(1);
                 }
                 5 => {
+                    self.reg_log.push((self.now, 1 + self.write_toggle as u8, val));
                     if self.write_toggle {
                         self.scroll.1 = val;
                     } else {
@@ -276,6 +343,13 @@ impl TestNes {
             if self.bus.ppuctrl & 0x80 != 0 {
                 self.cpu.nmi(&mut self.bus);
             }
+        }
+        // Rendering of the visible picture starts: latch this frame's sprite-0 hit.
+        let frame_start = self.frames * CYCLES_PER_FRAME;
+        let latch = frame_start + pixel_cycle(0, 0);
+        if before < latch && self.cpu.cycles >= latch {
+            self.bus.sprite0_at = self.bus.sprite0_hit().map(|(x, y)| frame_start + pixel_cycle(x, y));
+            self.bus.sprite0_clear = frame_start + CYCLES_PER_FRAME + VBLANK_CYCLES;
         }
         Ok((self.cpu.cycles - before) as u32)
     }

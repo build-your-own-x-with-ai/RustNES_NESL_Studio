@@ -19,8 +19,8 @@ let sx = hero.x - camera_x();             // 世界坐标 → 屏幕坐标（u16
 if sx < 256 { metasprite(0, sx as u8, hero.y, HERO); }   // 在屏幕外时不画
 ```
 - 主角保持在屏幕 x≈120；镜头每帧最多移动 8 像素。
-- 只支持横向卷轴。背景上的文字会随之滚动，固定的分数等 HUD 请用精灵绘制
-  （字体图块就是 ASCII 码：`sprite(i, x, y, '0' + d, 0)`）。
+- 只支持横向卷轴。背景上的文字会随之滚动；固定的分数请用 `status_bar(n)`（见 [006](../../006-map-edit-status/contracts/api.md)），
+  或用精灵绘制（字体图块就是 ASCII 码：`sprite(i, x, y, '0' + d, 0)`）。
 
 ## 调色板分区
 ```nesl

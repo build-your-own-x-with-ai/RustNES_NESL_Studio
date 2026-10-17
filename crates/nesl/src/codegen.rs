@@ -26,8 +26,9 @@ pub(crate) enum Sym {
     Struct(String),
     /// Marker for struct arrays; field access routes to Array("name.field", ...).
     StructArray(String),
-    /// A background map in ROM (column-major tiles at `label`, attributes at `label_a`).
-    Map { label: String, width: u8 },
+    /// A background map in ROM (column-major tiles at `label`, attributes at `label_a`);
+    /// `id` (1-based) tags its entries in the runtime change list.
+    Map { label: String, width: u8, id: u8 },
     /// A song: 2-byte events at `label`; `lowest` is used for per-voice range checks.
     Music { label: String, lowest: Option<(u8, Pos)> },
     /// A metasprite table in ROM: `[count, (dx, dy, tile, attr)...]`.
@@ -55,6 +56,7 @@ pub struct Codegen {
     zones: HashMap<String, (Vec<(String, Pos)>, Pos)>,
     /// User `sound` effects, appended to the built-in table (ids 5, 6, ...).
     sounds: Vec<[u8; 8]>,
+    map_count: u8,
     scopes: Vec<HashMap<String, Sym>>,
     /// (continue label, break label) for each enclosing loop.
     loops: Vec<(String, String)>,
@@ -101,6 +103,61 @@ pub(crate) fn contains_call(e: &Expr) -> bool {
     }
 }
 
+/// Names of every function called in `b` (recursively), in source order.
+pub(crate) fn calls(b: &Block, out: &mut Vec<String>) {
+    fn ex(e: &Expr, out: &mut Vec<String>) {
+        match &e.kind {
+            ExprKind::Call(n, args) => {
+                out.push(n.clone());
+                args.iter().for_each(|a| ex(a, out));
+            }
+            ExprKind::Index(_, i) => ex(i, out),
+            ExprKind::Unary(_, x) | ExprKind::Cast(x, _) => ex(x, out),
+            ExprKind::Binary(_, l, r) => {
+                ex(l, out);
+                ex(r, out);
+            }
+            _ => {}
+        }
+    }
+    for s in b {
+        match s {
+            Stmt::Let { init, .. } => ex(init, out),
+            Stmt::Assign { target, value, .. } => {
+                if let Place::Index(_, i, _) = target {
+                    ex(i, out);
+                }
+                ex(value, out);
+            }
+            Stmt::If { cond, then, els, .. } => {
+                ex(cond, out);
+                calls(then, out);
+                if let Some(e) = els {
+                    calls(e, out);
+                }
+            }
+            Stmt::While { cond, body, .. } => {
+                ex(cond, out);
+                calls(body, out);
+            }
+            Stmt::Loop { body, .. } => calls(body, out),
+            Stmt::For { start, end, body, .. } => {
+                ex(start, out);
+                ex(end, out);
+                calls(body, out);
+            }
+            Stmt::Return(Some(e), _) | Stmt::Expr(e) => ex(e, out),
+            Stmt::Match { value, arms, .. } => {
+                ex(value, out);
+                for arm in arms {
+                    calls(&arm.body, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Converts a constant to the bit pattern of `t`, rejecting values that do not fit.
 pub(crate) fn fit(v: i64, t: Type, pos: Pos) -> R<u16> {
     let max = type_max(t);
@@ -127,6 +184,7 @@ impl Codegen {
             structs: HashMap::new(),
             zones: HashMap::new(),
             sounds: Vec::new(),
+            map_count: 0,
             scopes: Vec::new(),
             loops: Vec::new(),
             cur_ret: None,
@@ -157,6 +215,16 @@ impl Codegen {
                 }
             }
         }
+        // The map change list takes ~290 bytes of RAM, so it is reserved only when used.
+        let mut called = Vec::new();
+        for d in &prog.items {
+            if let Decl::Fn(f) = d {
+                calls(&f.body, &mut called);
+            }
+        }
+        if called.iter().any(|n| n == "set_map_tile") {
+            self.ram_next = runtime::OV_END;
+        }
         for d in &prog.items {
             if let Decl::PaletteZone { name, rows, pos } = d {
                 if self.zones.insert(name.clone(), (rows.clone(), *pos)).is_some() {
@@ -169,7 +237,7 @@ impl Codegen {
                 // Keep the name defined so later uses do not cascade into
                 // misleading "unknown" errors.
                 if let Decl::Map { name, .. } = d {
-                    self.globals.entry(name.clone()).or_insert(Sym::Map { label: "__bad_map".into(), width: 32 });
+                    self.globals.entry(name.clone()).or_insert(Sym::Map { label: "__bad_map".into(), width: 32, id: 0 });
                 }
                 self.errors.push(e);
             }
@@ -444,7 +512,12 @@ impl Codegen {
                 }
                 let attrs = self.palette_zone_attrs(name, width)?;
                 let label = format!("m_{name}");
-                self.globals.insert(name.clone(), Sym::Map { label: label.clone(), width: width as u8 });
+                if self.map_count == u8::MAX {
+                    return self.err(*pos, "at most 255 maps");
+                }
+                self.map_count += 1;
+                let id = self.map_count;
+                self.globals.insert(name.clone(), Sym::Map { label: label.clone(), width: width as u8, id });
                 self.data.push((format!("{label}_a"), attrs));
                 self.data.push((label, tiles));
             }
@@ -544,59 +617,6 @@ impl Codegen {
     }
 
     fn check_recursion(&self, prog: &Program) -> R<()> {
-        fn calls(b: &Block, out: &mut Vec<String>) {
-            fn ex(e: &Expr, out: &mut Vec<String>) {
-                match &e.kind {
-                    ExprKind::Call(n, args) => {
-                        out.push(n.clone());
-                        args.iter().for_each(|a| ex(a, out));
-                    }
-                    ExprKind::Index(_, i) => ex(i, out),
-                    ExprKind::Unary(_, x) | ExprKind::Cast(x, _) => ex(x, out),
-                    ExprKind::Binary(_, l, r) => {
-                        ex(l, out);
-                        ex(r, out);
-                    }
-                    _ => {}
-                }
-            }
-            for s in b {
-                match s {
-                    Stmt::Let { init, .. } => ex(init, out),
-                    Stmt::Assign { target, value, .. } => {
-                        if let Place::Index(_, i, _) = target {
-                            ex(i, out);
-                        }
-                        ex(value, out);
-                    }
-                    Stmt::If { cond, then, els, .. } => {
-                        ex(cond, out);
-                        calls(then, out);
-                        if let Some(e) = els {
-                            calls(e, out);
-                        }
-                    }
-                    Stmt::While { cond, body, .. } => {
-                        ex(cond, out);
-                        calls(body, out);
-                    }
-                    Stmt::Loop { body, .. } => calls(body, out),
-                    Stmt::For { start, end, body, .. } => {
-                        ex(start, out);
-                        ex(end, out);
-                        calls(body, out);
-                    }
-                    Stmt::Return(Some(e), _) | Stmt::Expr(e) => ex(e, out),
-                    Stmt::Match { value, arms, .. } => {
-                        ex(value, out);
-                        for arm in arms {
-                            calls(&arm.body, out);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
         let mut graph: BTreeMap<&str, (Vec<String>, Pos)> = BTreeMap::new();
         for d in &prog.items {
             if let Decl::Fn(f) = d {

@@ -54,7 +54,13 @@ fn maze_hero_walks_collects_coins_and_never_glitches() {
     let out = build(&example("maze"));
     let mut nes = TestNes::from_ines(&out.rom).unwrap();
     let v = |nes: &TestNes, n: &str| nes.peek(out.vars[n].addr);
-    nes.run_frames(10).unwrap();
+    // Start-up scans all 960 map cells for coins; wait for it instead of guessing a frame count.
+    let mut waited = 0;
+    while v(&nes, "left") == 0 {
+        nes.run_frames(1).unwrap();
+        waited += 1;
+        assert!(waited < 60, "coin scan never finished");
+    }
     assert_eq!(&nes.bus.vram[0x2000 + 3 * 32..][..32], &[b'#'; 32], "map drawn");
     assert_eq!(v(&nes, "left"), v(&nes, "ncoins"));
     assert!(v(&nes, "ncoins") >= 10);
@@ -96,7 +102,12 @@ fn runner_scrolls_through_the_level_without_glitches() {
     for (reg, voice) in [(0x4002, "melody"), (0x400A, "bass"), (0x4006, "harmony")] {
         assert!(w.iter().filter(|(a, _)| *a == reg).count() > 20, "{voice} plays");
     }
-    assert!(nes.peek(out.vars["score"].addr) > 0, "coins collected");
+    let score = nes.peek(out.vars["score"].addr);
+    assert!(score > 0, "coins collected");
+    // every coin taken is recorded in the map's change list, so none can come back
+    assert_eq!(nes.peek(0x039B), score, "one recorded change per coin");
+    assert_eq!(&nes.bus.vram[0x2020 + 2..][..5], b"COINS", "status bar survived the whole level");
+    assert_eq!(&nes.bus.vram[0x2020 + 20..][..8], b"YOU WIN!");
     assert!(cam > 0, "camera followed");
     assert_eq!(nes.bus.render_conflicts, 0);
 }

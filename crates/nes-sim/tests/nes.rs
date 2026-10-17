@@ -338,3 +338,94 @@ fn vblank_and_rendering_off_writes_are_not_conflicts() {
 fn bus_new_starts_with_no_conflicts() {
     assert_eq!(NesBus::new(vec![], vec![]).render_conflicts, 0);
 }
+
+// ---------------------------------------------------------------- sprite 0 hit
+
+/// Bus with an opaque background pixel at screen (248, 30) (tile 1 at column 31, row 3,
+/// pattern row 6, leftmost pixel) and sprite 0 (tile 2, one pixel in its top-left corner)
+/// placed on it.
+fn hit_bus() -> NesBus {
+    let mut bus = NesBus::new(vec![], vec![]);
+    bus.vram[16 + 6] = 0x80; // tile 1, row 6, plane 0
+    bus.vram[32] = 0x80; // tile 2, row 0, plane 0
+    bus.vram[0x2000 + 3 * 32 + 31] = 1;
+    bus.oam[..4].copy_from_slice(&[29, 2, 0x20, 248]); // y+1 = 30, behind background
+    bus.ppumask = 0x1E;
+    bus
+}
+
+#[test]
+fn sprite0_hit_is_the_first_opaque_overlap() {
+    let mut bus = hit_bus();
+    assert_eq!(bus.sprite0_hit(), Some((248, 30)));
+    bus.oam[3] = 247;
+    assert_eq!(bus.sprite0_hit(), None, "pixels side by side do not overlap");
+    bus.oam[3] = 248;
+    bus.ppumask = 0x08;
+    assert_eq!(bus.sprite0_hit(), None, "sprites disabled");
+}
+
+#[test]
+fn sprite0_hit_follows_scroll_and_nametable_select() {
+    let mut bus = hit_bus();
+    bus.scroll = (8, 0);
+    assert_eq!(bus.sprite0_hit(), None, "background moved 8 px left");
+    bus.oam[3] = 240;
+    assert_eq!(bus.sprite0_hit(), Some((240, 30)));
+    // nametable 1 selected: the tile must be in $2400 instead
+    let mut bus = hit_bus();
+    bus.ppuctrl = 0x01;
+    assert_eq!(bus.sprite0_hit(), None);
+    bus.vram[0x2400 + 3 * 32 + 31] = 1;
+    assert_eq!(bus.sprite0_hit(), Some((248, 30)));
+}
+
+#[test]
+fn sprite0_never_hits_at_x_255() {
+    let mut bus = NesBus::new(vec![], vec![]);
+    bus.vram[16] = 0x01; // tile 1 row 0, rightmost pixel
+    bus.vram[32] = 0x80;
+    bus.vram[0x2000 + 31] = 1;
+    bus.oam[..4].copy_from_slice(&[0xFF, 2, 0, 255]); // y+1 = 0 wraps: use row 0 below
+    bus.oam[0] = 0; // shows on scanline 1
+    bus.vram[16 + 1] = 0x01;
+    bus.ppumask = 0x1E;
+    assert_eq!(bus.sprite0_hit(), None);
+}
+
+#[test]
+fn ppustatus_bit6_is_set_from_the_hit_until_the_next_prerender_line() {
+    use nes_sim::nes::{pixel_cycle, CYCLES_PER_FRAME, VBLANK_CYCLES};
+    use nes_sim::Bus;
+    let mut nes = machine(&[0x4C, 0x00, 0x80]);
+    nes.bus.vram[..0x2000].fill(0);
+    let h = hit_bus();
+    nes.bus.vram[16 + 6] = 0x80;
+    nes.bus.vram[32] = 0x80;
+    nes.bus.vram[0x2000 + 3 * 32 + 31] = 1;
+    nes.bus.oam = h.oam;
+    nes.bus.ppumask = 0x1E;
+    let frame2 = 2 * CYCLES_PER_FRAME;
+    while nes.cpu.cycles < frame2 + pixel_cycle(0, 40) {
+        nes.step().unwrap();
+    }
+    let hit = frame2 + pixel_cycle(248, 30);
+    assert_eq!(nes.bus.sprite0_at, Some(hit));
+    for (now, set) in [(hit - 1, false), (hit, true), (frame2 + CYCLES_PER_FRAME + VBLANK_CYCLES - 1, true),
+                       (frame2 + CYCLES_PER_FRAME + VBLANK_CYCLES, false)] {
+        nes.bus.now = now;
+        assert_eq!(nes.bus.read(0x2002) & 0x40 != 0, set, "cycle {now}");
+    }
+}
+
+#[test]
+fn logs_ppuctrl_and_scroll_writes_with_cycles() {
+    // LDA #1 / STA $2000 / LDA #5 / STA $2005 / LDA #7 / STA $2005 / JMP *
+    let mut nes = machine(&[0xA9, 1, 0x8D, 0, 0x20, 0xA9, 5, 0x8D, 5, 0x20, 0xA9, 7, 0x8D, 5, 0x20, 0x4C, 0x0F, 0x80]);
+    for _ in 0..8 {
+        nes.step().unwrap();
+    }
+    let kinds: Vec<(u8, u8)> = nes.bus.reg_log.iter().map(|(_, k, v)| (*k, *v)).collect();
+    assert_eq!(kinds, vec![(0, 1), (1, 5), (2, 7)]);
+    assert!(nes.bus.reg_log.windows(2).all(|w| w[0].0 < w[1].0));
+}

@@ -19,7 +19,7 @@ pub struct Token {
     pub pos: Pos,
 }
 
-const KEYWORDS: &[&str] = &[
+pub const KEYWORDS: &[&str] = &[
     "fn", "let", "var", "const", "tile", "if", "else", "while", "loop", "for", "in", "break",
     "continue", "return", "as", "struct", "match",
 ];

@@ -26,9 +26,11 @@
   .status { color: var(--muted); font-size: 13px; }
   .status.ok { color: var(--ok); } .status.err { color: var(--err); }
   main { display: grid; grid-template-columns: minmax(0, 1fr) 540px; height: calc(100% - 53px); }
-  @media (max-width: 1000px) { main { grid-template-columns: 1fr; height: auto; } .editor { height: 60vh; } }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; height: auto; } .left { height: 70vh; } }
 
-  .editor { position: relative; display: flex; overflow: hidden; border-right: 1px solid var(--line); }
+  [hidden] { display: none !important; }
+  .left { display: flex; flex-direction: column; min-width: 0; overflow: hidden; border-right: 1px solid var(--line); }
+  .editor { position: relative; display: flex; overflow: hidden; flex: 1; min-height: 0; }
   .gutter { flex: none; width: 52px; padding: 12px 8px 12px 0; text-align: right; color: var(--muted);
     font: 13px/20px var(--mono); background: var(--panel); overflow: hidden; user-select: none; white-space: pre; }
   .gutter .bad { color: var(--err); font-weight: 700; }
@@ -56,6 +58,28 @@
   .panel .e { color: var(--err); cursor: pointer; white-space: pre-wrap; }
   .panel .e:hover { text-decoration: underline; }
   .panel .ok { color: var(--ok); white-space: pre-wrap; }
+  .view { flex: 1; overflow: auto; padding: 16px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .toolbar input { font: 13px var(--mono); color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  .chip { font-family: var(--mono); padding: 4px 10px; }
+  .chip.sel { border-color: var(--accent2); color: var(--accent2); }
+  .swatch { width: 28px; height: 28px; border-radius: 4px; border: 2px solid var(--line); cursor: pointer; display: inline-block; vertical-align: middle; }
+  .swatch.sel { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2); }
+  .hatch { background: repeating-linear-gradient(45deg, #444 0 4px, #222 4px 8px) !important; }
+  canvas.pixgrid { width: auto; height: auto; max-width: none; cursor: crosshair; }
+  .mapwrap { overflow: auto; max-height: calc(100vh - 230px); border: 1px solid var(--line); border-radius: 4px; }
+  .palrow { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+  .palrow .note { width: 52px; margin: 0; }
+  .palgrid { display: grid; grid-template-columns: repeat(16, 28px); gap: 4px; margin-top: 8px; }
+  .note { color: var(--muted); font-size: 12px; margin: 8px 0; }
+  .note code, .tip code { font-family: var(--mono); color: var(--fn); }
+  .complete { position: absolute; z-index: 5; min-width: 260px; max-height: 200px; overflow: auto; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; font: 12px/22px var(--mono); box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+  .complete div { padding: 0 10px; white-space: nowrap; cursor: pointer; }
+  .complete div.sel { background: rgba(130,170,255,.22); }
+  .complete .k { color: var(--muted); float: right; margin-left: 16px; }
+  .tip { position: fixed; z-index: 6; max-width: 440px; background: #0d0f13; border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px 10px; font-size: 12px; line-height: 1.5; pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
 </style>
 </head>
 <body>
@@ -70,11 +94,52 @@
   <span class="status">高级语言 → NES ROM，无需汇编</span>
 </header>
 <main>
-  <section class="editor">
-    <div class="gutter" id="gutter">1</div>
-    <div class="code">
-      <pre id="highlight" aria-hidden="true"></pre>
-      <textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+  <section class="left">
+    <div class="tabs" id="modes">
+      <button class="active" data-mode="code">代码</button>
+      <button data-mode="tiles">图块</button>
+      <button data-mode="maps">地图</button>
+      <button data-mode="palette">调色板</button>
+      <span class="spacer"></span>
+      <button id="undo" title="撤销图块 / 地图 / 调色板里的修改" disabled>↶ 撤销</button>
+    </div>
+    <div class="editor" id="view-code">
+      <div class="gutter" id="gutter">1</div>
+      <div class="code">
+        <pre id="highlight" aria-hidden="true"></pre>
+        <textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+        <div class="complete" id="complete" hidden></div>
+      </div>
+    </div>
+    <div class="view" id="view-tiles" hidden>
+      <div class="toolbar"><span class="note">图块</span><span id="tile-list" class="toolbar"></span>
+        <input id="tile-new" placeholder="编号，如 9 或 '#'" size="14"><button id="tile-add">＋ 新建 / 选择</button></div>
+      <div class="toolbar"><span class="note">颜色</span><span id="tile-colors"></span>
+        <span class="note">预览用</span><select id="tile-pal">
+          <option value="0">背景调色板 0</option><option value="1">背景调色板 1</option><option value="2">背景调色板 2</option><option value="3">背景调色板 3</option>
+          <option value="4">精灵调色板 0</option><option value="5">精灵调色板 1</option><option value="6">精灵调色板 2</option><option value="7">精灵调色板 3</option>
+        </select></div>
+      <canvas id="tile-canvas" class="pixgrid" width="256" height="256"></canvas>
+      <div class="note" id="tile-empty" hidden>源码里还没有 tile 声明：输入编号后点「新建」。</div>
+      <div class="note">左键用选中的颜色画，右键擦成颜色 0。每一笔都会写回代码里的 <code>tile</code> 声明。</div>
+    </div>
+    <div class="view" id="view-maps" hidden>
+      <div class="toolbar"><span class="note">地图</span><select id="map-select"></select>
+        <span class="note">画笔</span><input id="map-brush" class="chip" size="2" value="#">
+        <span id="map-chars" class="toolbar"></span><span class="note" id="map-pos"></span></div>
+      <div class="note" id="map-empty" hidden>源码里还没有 <code>map</code> 声明。</div>
+      <div class="mapwrap" id="map-wrap"><canvas id="map-canvas" class="pixgrid" width="256" height="240"></canvas></div>
+      <div class="note" id="map-note"></div>
+      <div class="note">左键画选中的字符，右键擦成 <code>.</code>。字符就是图块编号（ASCII 码）。</div>
+    </div>
+    <div class="view" id="view-palette" hidden>
+      <div class="note" id="pal-empty" hidden>没有找到调色板：用 <code>const PAL: [u8] = [...]</code> 声明，并调用 <code>load_palette(PAL)</code>。</div>
+      <div id="pal-body">
+        <div class="note">调色板 <code id="pal-name"></code>：先点一格选中，再在下面的 NES 64 色里点新颜色。</div>
+        <div id="pal-slots"></div>
+        <div class="note" id="pal-info"></div>
+        <div class="palgrid" id="pal-grid"></div>
+      </div>
     </div>
   </section>
   <aside>
@@ -83,7 +148,7 @@
       <div class="hint">点击画面获得焦点 · <kbd>←↑→↓</kbd> 方向 · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>Enter</kbd> Start · <kbd>Shift</kbd> Select</div>
       <div class="hint" id="emu-note"></div>
     </div>
-    <div class="tabs">
+    <div class="tabs" id="out-tabs">
       <button class="active" data-tab="problems">输出</button>
       <button data-tab="asm">汇编清单</button>
     </div>
@@ -91,7 +156,9 @@
     <div class="panel" id="asm" hidden></div>
   </aside>
 </main>
+<div class="tip" id="tip" hidden></div>
 <script src="https://unpkg.com/jsnes@1.2.1/dist/jsnes.min.js"></script>
+<script src="/studio.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -100,8 +167,11 @@
   let errorLines = new Set(), romBytes = null, examples = [];
 
   // ---------------------------------------------------------------- editor
-  const KW = /^(fn|let|var|const|tile|map|metasprite|palette_zone|music|sound|struct|match|if|else|while|loop|for|in|break|continue|return|as|true|false|u8|i8|u16)$/;
-  const BUILTIN = /^(wait_vblank|ppu_on|ppu_off|load_palette|vram_addr|vram_put|vram_fill|print|print_u8|sprite|hide_sprite|joypad|scroll|rand|frame_count|peek|poke|play_tone|stop_sound|set_tile|draw_map|map_tile|metasprite|collide|sfx|camera_follow|camera_x|play_music|stop_music|set_map_tile|reset_map|status_bar)$/;
+  // fallbacks until /api/builtins (the compiler's own lists) arrives
+  const FALLBACK_KW = "fn let var const tile map metasprite palette_zone music sound struct match if else while loop for in break continue return as true false u8 i8 u16".split(" ");
+  const FALLBACK_FNS = "wait_vblank ppu_on ppu_off load_palette vram_addr vram_put vram_fill print print_u8 sprite hide_sprite joypad scroll rand frame_count peek poke play_tone stop_sound set_tile draw_map map_tile metasprite collide sfx camera_follow camera_x play_music stop_music set_map_tile reset_map status_bar".split(" ");
+  let builtins = { functions: [], constants: [], keywords: FALLBACK_KW };
+  let fnNames = new Set(FALLBACK_FNS), kwNames = new Set(FALLBACK_KW);
   const TOKEN = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)|\b(0x[0-9a-fA-F_]+|0b[01_]+|\d[\d_]*)\b|([A-Za-z_]\w*)/g;
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
@@ -114,8 +184,8 @@
       if (m[1]) out += `<span class="tok-com">${t}</span>`;
       else if (m[2]) out += `<span class="tok-str">${t}</span>`;
       else if (m[3]) out += `<span class="tok-num">${t}</span>`;
-      else if (KW.test(m[4])) out += `<span class="tok-kw">${t}</span>`;
-      else if (BUILTIN.test(m[4])) out += `<span class="tok-fn">${t}</span>`;
+      else if (kwNames.has(m[4])) out += `<span class="tok-kw">${t}</span>`;
+      else if (fnNames.has(m[4])) out += `<span class="tok-fn">${t}</span>`;
       else if (/^[A-Z][A-Z0-9_]+$/.test(m[4])) out += `<span class="tok-const">${t}</span>`;
       else out += t;
       last = m.index + m[0].length;
@@ -136,9 +206,11 @@
   }
   function syncScroll() { hl.scrollTop = src.scrollTop; hl.scrollLeft = src.scrollLeft; gutter.scrollTop = src.scrollTop; }
 
-  src.addEventListener("input", () => { errorLines.clear(); refresh(); });
+  src.addEventListener("input", () => { refresh(); scheduleCheck(); updateCompletion(); });
   src.addEventListener("scroll", syncScroll);
   src.addEventListener("keydown", (e) => {
+    tip.hidden = true;
+    if (completionKey(e)) return;
     if (e.key === "Tab") {
       e.preventDefault();
       const s = src.selectionStart;
@@ -248,14 +320,7 @@
     problems.innerHTML = "";
     errorLines.clear();
     if (!res.ok) {
-      for (const err of res.errors) {
-        errorLines.add(err.line);
-        const div = document.createElement("div");
-        div.className = "e";
-        div.textContent = `${err.line}:${err.col}  ${err.message}`;
-        div.onclick = () => gotoLine(err.line, err.col);
-        problems.appendChild(div);
-      }
+      showErrors(res.errors);
       setStatus(`${res.errors.length} 个错误`, "err");
       showTab("problems");
       refresh();
@@ -265,6 +330,7 @@
     const bin = atob(res.rom);
     romBytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) romBytes[i] = bin.charCodeAt(i);
+    chr = Studio.decodeChr(romBytes);
     $("download").disabled = false;
     asmPanel.textContent = res.asm;
     const ok = document.createElement("div");
@@ -288,11 +354,11 @@
   $("mute").onclick = () => { muted = !muted; $("mute").textContent = muted ? "🔇 静音" : "🔊 声音"; };
 
   function showTab(name) {
-    document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    document.querySelectorAll("#out-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     problems.hidden = name !== "problems";
     asmPanel.hidden = name !== "asm";
   }
-  document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+  document.querySelectorAll("#out-tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 
   $("examples").onchange = (e) => {
     const ex = examples.find((x) => x.name === e.target.value);
@@ -310,7 +376,459 @@
     try { saved = localStorage.getItem("nesl-source"); } catch (e) {}
     src.value = saved || (list[0] && list[0].source) || "fn main() {\n}\n";
     refresh();
+    scheduleCheck();
   });
+  // ---------------------------------------------------------------- live check
+  function showErrors(errors) {
+    problems.innerHTML = "";
+    errorLines.clear();
+    for (const err of errors) {
+      errorLines.add(err.line);
+      const div = document.createElement("div");
+      div.className = "e";
+      div.textContent = `${err.line}:${err.col}  ${err.message}`;
+      div.onclick = () => { setMode("code"); gotoLine(err.line, err.col); };
+      problems.appendChild(div);
+    }
+  }
+  let checkTimer = null, checkSeq = 0;
+  function scheduleCheck() {
+    clearTimeout(checkTimer);
+    checkTimer = setTimeout(checkNow, 500);
+  }
+  async function checkNow() {
+    const seq = ++checkSeq, text = src.value;
+    let res;
+    try {
+      const r = await fetch("/api/check", { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" }, body: text });
+      res = await r.json();
+    } catch (e) {
+      return; // server gone: keep the last result
+    }
+    if (seq !== checkSeq || text !== src.value) return; // a newer edit is on its way
+    showErrors(res.errors);
+    if (res.ok) {
+      const ok = document.createElement("div");
+      ok.className = "ok";
+      ok.textContent = "✓ 没有错误（自动检查）";
+      problems.appendChild(ok);
+      setStatus("没有错误", "ok");
+    } else {
+      setStatus(`${res.errors.length} 个错误`, "err");
+      showTab("problems");
+    }
+    refresh();
+  }
+
+  // ---------------------------------------------------------------- completion and hover
+  const pop = $("complete"), tip = $("tip");
+  let items = [], sel = 0;
+  const KIND = { function: "内建函数", "user-fn": "函数", user: "名字", constant: "常量", keyword: "关键字" };
+  function charWidth() {
+    const probe = document.createElement("span");
+    probe.style.cssText = "position:absolute;visibility:hidden;font:13px/20px var(--mono);white-space:pre";
+    probe.textContent = "M".repeat(40);
+    document.body.appendChild(probe);
+    const w = probe.getBoundingClientRect().width / 40;
+    probe.remove();
+    return w || 7.8;
+  }
+  let CW = 0;
+  function caretXY() {
+    if (!CW) CW = charWidth();
+    const before = src.value.slice(0, src.selectionStart);
+    const line = before.split("\n").length - 1;
+    const col = before.length - before.lastIndexOf("\n") - 1;
+    return { x: 16 + col * CW - src.scrollLeft, y: 12 + (line + 1) * 20 - src.scrollTop };
+  }
+  function renderPop() {
+    pop.innerHTML = "";
+    items.forEach((c, i) => {
+      const d = document.createElement("div");
+      if (i === sel) d.className = "sel";
+      d.innerHTML = `<span class="k">${KIND[c.kind] || ""}</span>`;
+      d.appendChild(document.createTextNode(c.detail && c.kind !== "user" ? c.detail : c.label));
+      d.onmousedown = (e) => { e.preventDefault(); sel = i; accept(); };
+      pop.appendChild(d);
+    });
+    const sd = pop.children[sel];
+    if (sd) sd.scrollIntoView({ block: "nearest" });
+  }
+  function updateCompletion() {
+    const pos = src.selectionStart;
+    if (pos !== src.selectionEnd) { pop.hidden = true; return; }
+    const prefix = Studio.prefixAt(src.value, pos);
+    items = prefix.length >= 2 ? Studio.complete(prefix, builtins, src.value).slice(0, 12) : [];
+    if (items.length === 1 && items[0].label === prefix) items = [];
+    if (!items.length) { pop.hidden = true; return; }
+    sel = 0;
+    const p = caretXY();
+    pop.style.left = Math.max(0, p.x) + "px";
+    pop.style.top = p.y + 2 + "px";
+    pop.hidden = false;
+    renderPop();
+  }
+  function accept() {
+    const c = items[sel];
+    if (!c) return;
+    const pos = src.selectionStart;
+    const prefix = Studio.prefixAt(src.value, pos);
+    const hasParen = src.value[pos] === "(";
+    const text = c.label + (c.call && !hasParen ? "()" : "");
+    src.setRangeText(text, pos - prefix.length, pos, "end");
+    if (c.call && !hasParen && c.args) src.selectionStart = src.selectionEnd = src.selectionStart - 1;
+    pop.hidden = true;
+    refresh();
+    scheduleCheck();
+    if (c.kind === "function") {
+      const r = src.getBoundingClientRect(), p = caretXY();
+      showTip(c, r.left + p.x, r.top + p.y + 4);
+    }
+  }
+  function completionKey(e) {
+    if (pop.hidden || e.ctrlKey || e.metaKey) return false;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      sel = (sel + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+      renderPop();
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      accept();
+    } else if (e.key === "Escape") {
+      pop.hidden = true;
+    } else {
+      return false;
+    }
+    e.preventDefault();
+    return true;
+  }
+  src.addEventListener("blur", () => setTimeout(() => (pop.hidden = true), 150));
+  src.addEventListener("click", () => { pop.hidden = true; });
+  src.addEventListener("scroll", () => { pop.hidden = true; tip.hidden = true; });
+
+  function showTip(fn, x, y) {
+    tip.innerHTML = "";
+    const code = document.createElement("code");
+    code.textContent = fn.sig || fn.detail;
+    const doc = document.createElement("div");
+    doc.textContent = fn.doc || "";
+    tip.append(code, doc);
+    tip.style.left = Math.min(x, window.innerWidth - 460) + "px";
+    tip.style.top = y + "px";
+    tip.hidden = false;
+  }
+  src.addEventListener("mousemove", (e) => {
+    if (!CW) CW = charWidth();
+    const r = src.getBoundingClientRect();
+    const line = Math.floor((e.clientY - r.top + src.scrollTop - 12) / 20);
+    const col = Math.floor((e.clientX - r.left + src.scrollLeft - 16) / CW);
+    const lines = src.value.split("\n");
+    if (line < 0 || line >= lines.length || col < 0 || col >= lines[line].length || !/\w/.test(lines[line][col])) {
+      tip.hidden = true;
+      return;
+    }
+    let pos = col;
+    for (let i = 0; i < line; i++) pos += lines[i].length + 1;
+    const w = Studio.wordAt(src.value, pos);
+    const fn = w && builtins.functions.find((f) => f.name === w.word);
+    if (fn) showTip(fn, e.clientX + 12, e.clientY + 16);
+    else tip.hidden = true;
+  });
+  src.addEventListener("mouseleave", () => { tip.hidden = true; });
+
+  // ---------------------------------------------------------------- visual editors
+  let chr = null, chrSource = null;
+  const undoStack = [];
+  let strokeStart = null;
+  function beginStroke() { strokeStart = src.value; }
+  function endStroke() {
+    if (strokeStart !== null && strokeStart !== src.value) {
+      undoStack.push(strokeStart);
+      $("undo").disabled = false;
+    }
+    strokeStart = null;
+  }
+  window.addEventListener("mouseup", () => { if (strokeStart !== null) { endStroke(); scheduleCheck(); } });
+  /** Replaces the source with `fn(source)`; an error (e.g. an expression entry) goes to the status bar. */
+  function edit(fn) {
+    try {
+      const next = fn(src.value);
+      if (next === src.value) return false;
+      src.value = next;
+      refresh();
+      return true;
+    } catch (e) {
+      setStatus(e.message, "err");
+      return false;
+    }
+  }
+  function oneShot(fn) {
+    beginStroke();
+    const changed = edit(fn);
+    endStroke();
+    if (changed) scheduleCheck();
+    return changed;
+  }
+  $("undo").onclick = () => {
+    if (!undoStack.length) return;
+    src.value = undoStack.pop();
+    $("undo").disabled = !undoStack.length;
+    refresh();
+    scheduleCheck();
+    renderMode();
+  };
+  const css = (n) => { const c = Studio.NES_RGB[n & 0x3f]; return `rgb(${c[0]},${c[1]},${c[2]})`; };
+  /** The program's palette as 32 NES colours (defaults where it has no literal value). */
+  function paletteColours() {
+    const p = Studio.findPalette(src.value);
+    const fallback = [0x0f, 0x00, 0x10, 0x30];
+    return Array.from({ length: 32 }, (_, i) => {
+      const e = p && p.entries[i];
+      return e && e.value !== null ? e.value : fallback[i % 4];
+    });
+  }
+
+  let mode = "code";
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll("#modes button[data-mode]").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+    for (const v of ["code", "tiles", "maps", "palette"]) document.getElementById("view-" + v).hidden = v !== m;
+    pop.hidden = tip.hidden = true;
+    renderMode();
+  }
+  document.querySelectorAll("#modes button[data-mode]").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+  function renderMode() {
+    if (mode === "tiles") renderTiles();
+    else if (mode === "maps") { buildPreview(); renderMaps(); }
+    else if (mode === "palette") renderPalette();
+    else refresh();
+  }
+  /** Compiles in the background (without running) to get the CHR graphics for map previews. */
+  async function buildPreview() {
+    if (chrSource === src.value) return;
+    const text = src.value;
+    try {
+      const r = await fetch("/api/compile", { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" }, body: text });
+      const res = await r.json();
+      if (!res.ok) return;
+      const bin = atob(res.rom), rom = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) rom[i] = bin.charCodeAt(i);
+      chr = Studio.decodeChr(rom);
+      chrSource = text;
+      if (mode === "maps") renderMaps();
+    } catch (e) {}
+  }
+
+  // tiles
+  let tileSel = null, colour = 3;
+  const tileCanvas = $("tile-canvas"), tctx = tileCanvas.getContext("2d");
+  function renderTiles() {
+    const tiles = Studio.findTiles(src.value);
+    if (tileSel === null || !tiles.some((t) => t.indexText === tileSel)) tileSel = tiles.length ? tiles[0].indexText : null;
+    const list = $("tile-list");
+    list.innerHTML = "";
+    for (const t of tiles) {
+      const b = document.createElement("button");
+      b.className = "chip" + (t.indexText === tileSel ? " sel" : "");
+      b.textContent = t.indexText;
+      b.onclick = () => { tileSel = t.indexText; renderTiles(); };
+      list.appendChild(b);
+    }
+    $("tile-empty").hidden = tiles.length > 0;
+    tileCanvas.hidden = !tileSel;
+    const pal = paletteColours(), group = +$("tile-pal").value;
+    const cols = [pal[0], pal[group * 4 + 1], pal[group * 4 + 2], pal[group * 4 + 3]];
+    const box = $("tile-colors");
+    box.innerHTML = "";
+    cols.forEach((c, i) => {
+      const sw = document.createElement("span");
+      sw.className = "swatch" + (i === colour ? " sel" : "");
+      sw.style.background = css(c);
+      sw.title = i === 0 ? "颜色 0（透明 / 背景色）" : `颜色 ${i}`;
+      sw.onclick = () => { colour = i; renderTiles(); };
+      box.appendChild(sw);
+    });
+    const t = tiles.find((x) => x.indexText === tileSel);
+    if (!t) return;
+    tctx.clearRect(0, 0, 256, 256);
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        tctx.fillStyle = css(cols[(t.pixels[y] && t.pixels[y][x]) || 0]);
+        tctx.fillRect(x * 32, y * 32, 32, 32);
+      }
+    }
+    tctx.strokeStyle = "rgba(255,255,255,.12)";
+    for (let i = 0; i <= 8; i++) {
+      tctx.beginPath(); tctx.moveTo(i * 32 + 0.5, 0); tctx.lineTo(i * 32 + 0.5, 256); tctx.stroke();
+      tctx.beginPath(); tctx.moveTo(0, i * 32 + 0.5); tctx.lineTo(256, i * 32 + 0.5); tctx.stroke();
+    }
+  }
+  $("tile-pal").onchange = renderTiles;
+  function paintTile(e) {
+    const r = tileCanvas.getBoundingClientRect();
+    const x = Math.floor(((e.clientX - r.left) / r.width) * 8), y = Math.floor(((e.clientY - r.top) / r.height) * 8);
+    if (x < 0 || x > 7 || y < 0 || y > 7 || tileSel === null) return;
+    const t = Studio.findTiles(src.value).find((v) => v.indexText === tileSel);
+    if (!t) return;
+    const px = Array.from({ length: 8 }, (_, i) => Array.from({ length: 8 }, (_, j) => (t.pixels[i] && t.pixels[i][j]) || 0));
+    const c = e.buttons & 2 ? 0 : colour;
+    if (px[y][x] === c) return;
+    px[y][x] = c;
+    if (edit((s) => Studio.upsertTile(s, tileSel, px))) renderTiles();
+  }
+  tileCanvas.addEventListener("mousedown", (e) => { beginStroke(); paintTile(e); });
+  tileCanvas.addEventListener("mousemove", (e) => { if (e.buttons) paintTile(e); });
+  tileCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  $("tile-add").onclick = () => {
+    const text = $("tile-new").value.trim();
+    const v = Studio.literal(text);
+    if (v === null || v < 0 || v > 255) { setStatus("图块编号是 0-255 的数字或字符，例如 9、0x41、'#'", "err"); return; }
+    const existing = Studio.findTiles(src.value).find((t) => t.index === v);
+    if (existing) { tileSel = existing.indexText; renderTiles(); return; }
+    const blank = Array.from({ length: 8 }, () => Array(8).fill(0));
+    if (oneShot((s) => Studio.upsertTile(s, text, blank))) { tileSel = text; renderTiles(); }
+  };
+
+  // maps
+  let mapSel = null;
+  const mapCanvas = $("map-canvas"), mctx = mapCanvas.getContext("2d");
+  const SCALE = 2;
+  function currentMap() {
+    const maps = Studio.findMaps(src.value);
+    if (mapSel === null || !maps.some((m) => m.name === mapSel)) mapSel = maps.length ? maps[0].name : null;
+    return { maps, map: maps.find((m) => m.name === mapSel) };
+  }
+  function renderMaps() {
+    const { maps, map } = currentMap();
+    const selEl = $("map-select");
+    selEl.innerHTML = "";
+    for (const m of maps) {
+      const o = document.createElement("option");
+      o.value = o.textContent = m.name;
+      o.selected = m.name === mapSel;
+      selEl.appendChild(o);
+    }
+    $("map-empty").hidden = !!map;
+    $("map-wrap").hidden = !map;
+    if (!map) return;
+    const width = Math.max(32, ...map.rows.map((r) => r.text.length));
+    const chars = [...new Set(map.rows.map((r) => r.text).join("").replace(/\./g, ""))].slice(0, 16);
+    const charBox = $("map-chars");
+    charBox.innerHTML = "";
+    for (const c of chars) {
+      const b = document.createElement("button");
+      b.className = "chip" + (c === $("map-brush").value ? " sel" : "");
+      b.textContent = c;
+      b.onclick = () => { $("map-brush").value = c; renderMaps(); };
+      charBox.appendChild(b);
+    }
+    $("map-note").textContent = chr ? `${width} 列 × 30 行` : `${width} 列 × 30 行（编译成功后显示真实图块，目前用文字代替）`;
+    mapCanvas.width = width * 8;
+    mapCanvas.height = 240;
+    mapCanvas.style.width = width * 8 * SCALE + "px";
+    mapCanvas.style.height = 240 * SCALE + "px";
+    const pal = paletteColours();
+    const cols = [pal[0], pal[1], pal[2], pal[3]].map((n) => Studio.NES_RGB[n & 0x3f]);
+    if (chr) {
+      const img = mctx.createImageData(width * 8, 240);
+      for (let y = 0; y < 30; y++) {
+        const row = (map.rows[y] && map.rows[y].text) || "";
+        for (let x = 0; x < width; x++) {
+          const ch = row[x] === undefined || row[x] === "." ? 32 : row.charCodeAt(x);
+          const tile = chr[ch] || chr[32];
+          for (let p = 0; p < 64; p++) {
+            const c = cols[tile[p]];
+            const o = ((y * 8 + (p >> 3)) * width * 8 + x * 8 + (p & 7)) * 4;
+            img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+          }
+        }
+      }
+      mctx.putImageData(img, 0, 0);
+    } else {
+      mctx.fillStyle = css(pal[0]);
+      mctx.fillRect(0, 0, width * 8, 240);
+      mctx.fillStyle = "#ddd";
+      mctx.font = "8px monospace";
+      mctx.textBaseline = "top";
+      map.rows.forEach((r, y) => [...r.text].forEach((c, x) => { if (c !== ".") mctx.fillText(c, x * 8 + 1, y * 8); }));
+    }
+  }
+  $("map-select").onchange = (e) => { mapSel = e.target.value; renderMaps(); };
+  $("map-brush").addEventListener("input", (e) => {
+    const v = e.target.value;
+    e.target.value = v.slice(-1);
+    renderMaps();
+  });
+  function mapCell(e) {
+    const r = mapCanvas.getBoundingClientRect();
+    return { x: Math.floor((e.clientX - r.left) / (8 * SCALE)), y: Math.floor((e.clientY - r.top) / (8 * SCALE)) };
+  }
+  function paintMap(e) {
+    const { x, y } = mapCell(e);
+    const ch = e.buttons & 2 ? "." : $("map-brush").value || "#";
+    const { map } = currentMap();
+    if (!map || y < 0 || y > 29 || x < 0) return;
+    const row = (map.rows[y] && map.rows[y].text) || "";
+    if ((row[x] || ".") === ch) return;
+    if (edit((s) => Studio.setMapCell(s, mapSel, x, y, ch))) renderMaps();
+  }
+  mapCanvas.addEventListener("mousedown", (e) => { beginStroke(); paintMap(e); });
+  mapCanvas.addEventListener("mousemove", (e) => {
+    const { x, y } = mapCell(e);
+    const { map } = currentMap();
+    const row = (map && map.rows[y] && map.rows[y].text) || "";
+    $("map-pos").textContent = `列 ${x}，行 ${y}：${row[x] || "."}`;
+    if (e.buttons) paintMap(e);
+  });
+  mapCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // palette
+  let palSel = 1;
+  function renderPalette() {
+    const p = Studio.findPalette(src.value);
+    $("pal-empty").hidden = !!p;
+    $("pal-body").hidden = !p;
+    if (!p) return;
+    $("pal-name").textContent = p.name;
+    const slots = $("pal-slots");
+    slots.innerHTML = "";
+    for (let g = 0; g < 8; g++) {
+      const row = document.createElement("div");
+      row.className = "palrow";
+      const label = document.createElement("span");
+      label.className = "note";
+      label.textContent = g < 4 ? `背景 ${g}` : `精灵 ${g - 4}`;
+      row.appendChild(label);
+      for (let k = 0; k < 4; k++) {
+        const i = g * 4 + k, e = p.entries[i];
+        const sw = document.createElement("span");
+        sw.className = "swatch" + (i === palSel ? " sel" : "") + (!e || e.value === null ? " hatch" : "");
+        if (e && e.value !== null) sw.style.background = css(e.value);
+        sw.title = `第 ${i} 项：` + (!e ? "（没有写）" : e.text);
+        sw.onclick = () => { palSel = i; renderPalette(); };
+        row.appendChild(sw);
+      }
+      slots.appendChild(row);
+    }
+    const e = p.entries[palSel];
+    $("pal-info").textContent = `第 ${palSel} 项：` + (!e ? "未写（选颜色后会补上）" : e.value === null ? `表达式 ${e.text}，请在代码里改` : e.text);
+    const grid = $("pal-grid");
+    grid.innerHTML = "";
+    for (let n = 0; n < 64; n++) {
+      const sw = document.createElement("span");
+      sw.className = "swatch" + (e && e.value === n ? " sel" : "");
+      sw.style.background = css(n);
+      sw.title = "0x" + n.toString(16).toUpperCase().padStart(2, "0");
+      sw.onclick = () => { if (oneShot((s) => Studio.setPaletteEntry(s, palSel, n))) renderPalette(); };
+      grid.appendChild(sw);
+    }
+  }
+
+  fetch("/api/builtins").then((r) => r.json()).then((b) => {
+    builtins = b;
+    fnNames = new Set(b.functions.map((f) => f.name));
+    kwNames = new Set(b.keywords);
+    refresh();
+  }).catch(() => {});
+
   refresh();
 })();
 </script>

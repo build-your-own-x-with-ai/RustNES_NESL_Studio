@@ -25,6 +25,13 @@ fn writes(per: &Frames, reg: u16) -> Vec<(usize, u8)> {
         .collect()
 }
 
+/// The control-register value written by the first note-on (play_music first silences
+/// the channel, so the note's own write is the last one in that frame).
+fn first_note_ctrl(per: &Frames, ctrl: u16, period_lo: u16) -> u8 {
+    let f = writes(per, period_lo)[0].0;
+    writes(per, ctrl).into_iter().filter(|(g, _)| *g == f).last().unwrap().1
+}
+
 fn song(music: &str, play: &str) -> String {
     format!("{music} var t: u8; fn main() {{ {play}; loop {{ wait_vblank(); t += 1; }} }}")
 }
@@ -51,7 +58,7 @@ fn a4_is_440_hz() {
     assert_eq!(writes(&per, 0x4002)[0].1, 253);
     assert_eq!(writes(&per, 0x4003)[0].1, 0);
     // default V12 @2: duty bits 10, length halt + constant volume, volume 12
-    assert_eq!(writes(&per, 0x4000)[0].1, 0b1011_1100);
+    assert_eq!(first_note_ctrl(&per, 0x4000, 0x4002), 0b1011_1100);
 }
 
 #[test]
@@ -59,9 +66,11 @@ fn ten_loops_do_not_drift() {
     // eighth notes at T130 are 13.85 frames; the loop is round(4 * 13.85) = 55 frames
     let (_, per) = trace(&song("music M = \"T130 L8 CCCC\";", "play_music(M)"), 560);
     let on: Vec<usize> = writes(&per, 0x4002).into_iter().map(|(f, _)| f).collect();
+    // Every loop is exactly round(total) = 55 frames, and inside a loop each note starts at
+    // its rounded position, so the k-th loop never shifts relative to the first.
     let eighth = 3600.0 / 130.0 / 2.0;
     for k in 0..40usize {
-        let ideal = (k as f64 * eighth).round() as usize;
+        let ideal = (k / 4) * 55 + ((k % 4) as f64 * eighth).round() as usize;
         assert_eq!(on[k] - on[0], ideal, "note {k}");
     }
 }
@@ -69,13 +78,16 @@ fn ten_loops_do_not_drift() {
 #[test]
 fn volume_and_duty_commands() {
     let (_, per) = trace(&song("music M = \"V5 @1 C\";", "play_music(M)"), 5);
-    assert_eq!(writes(&per, 0x4000)[0].1, 0b0111_0101);
+    assert_eq!(first_note_ctrl(&per, 0x4000, 0x4002), 0b0111_0101);
 }
 
 #[test]
 fn stop_music_silences_and_stops_advancing() {
-    let (_, per) = trace(&song("music M = \"L8 CDEFGAB\";", "play_music(M); if t == 99 { stop_music(); }")
-        .replace("t += 1; }", "t += 1; if t == 30 { stop_music(); } }"), 120);
+    let (_, per) = trace(
+        "music M = \"L8 CDEFGAB\"; var t: u8;
+         fn main() { play_music(M); loop { wait_vblank(); t += 1; if t == 30 { stop_music(); } } }",
+        120,
+    );
     let on = writes(&per, 0x4002);
     let last_on = on.last().unwrap().0;
     assert!(last_on < 35, "no notes after stop_music (last at frame {last_on})");

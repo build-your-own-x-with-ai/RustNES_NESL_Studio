@@ -28,6 +28,8 @@ pub(crate) enum Sym {
     StructArray(String),
     /// A background map in ROM (column-major tiles at `label`, attributes at `label_a`).
     Map { label: String, width: u8 },
+    /// A song: 2-byte events at `label`; `lowest` is used for per-voice range checks.
+    Music { label: String, lowest: Option<(u8, Pos)> },
     /// A metasprite table in ROM: `[count, (dx, dy, tile, attr)...]`.
     Metasprite { label: String },
 }
@@ -436,7 +438,17 @@ impl Codegen {
                 self.data.push((label, tiles));
             }
             Decl::PaletteZone { .. } => {}
-            Decl::Music { pos, .. } | Decl::Sound { pos, .. } => return self.err(*pos, "not implemented yet"),
+            Decl::Music { name, parts, pos } => {
+                self.define(name, *pos)?;
+                if parts.is_empty() {
+                    return self.err(*pos, "music has no notes");
+                }
+                let song = crate::mml::compile(parts)?;
+                let label = format!("mu_{name}");
+                self.globals.insert(name.clone(), Sym::Music { label: label.clone(), lowest: song.lowest });
+                self.data.push((label, song.events));
+            }
+            Decl::Sound { pos, .. } => return self.err(*pos, "not implemented yet"),
             Decl::Metasprite { name, parts, pos } => {
                 self.define(name, *pos)?;
                 if parts.is_empty() || parts.len() > 63 {
@@ -689,6 +701,7 @@ impl Codegen {
                 Some(Sym::Struct(_)) => self.err(e.pos, format!("`{name}` is a struct; access a field with `{name}.field`")),
                 Some(Sym::StructArray(_)) => self.err(e.pos, format!("`{name}` is a struct array; access a field with `{name}[i].field`")),
                 Some(Sym::Map { .. }) => self.err(e.pos, format!("`{name}` is a map; use `draw_map({name})` or `map_tile({name}, x, y)`")),
+                Some(Sym::Music { .. }) => self.err(e.pos, format!("`{name}` is music; play it with `play_music({name})`")),
                 Some(Sym::Metasprite { .. }) => self.err(e.pos, format!("`{name}` is a metasprite; draw it with `metasprite(slot, x, y, {name})`")),
                 Some(Sym::Const(_)) => unreachable!(),
                 None => Err(self.unknown_var(name, e.pos)),

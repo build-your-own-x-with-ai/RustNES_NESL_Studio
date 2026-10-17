@@ -26,7 +26,9 @@ pub const ARG3: u16 = 0x13;
 pub const ARG4: u16 = 0x14;
 /// Committed length of the VRAM update queue.
 pub const VQ_LEN: u16 = 0x15;
-pub const USER_ZP_START: u16 = 0x16;
+/// Zero-page pointer used only inside the NMI (the main program may be using PTR).
+pub const NMI_PTR: u16 = 0x16;
+pub const USER_ZP_START: u16 = 0x18;
 pub const OAM_SHADOW: u16 = 0x0200;
 /// VRAM update queue: entries of `[addr_hi, addr_lo, len, bytes...]`, flushed by NMI.
 pub const VQ: u16 = 0x0300;
@@ -63,7 +65,13 @@ pub const SUB_LO: u16 = 0x037A;
 pub const SUB_HI: u16 = 0x037B;
 pub const NGROUPS: u16 = 0x037C;
 pub const AG: u16 = 0x037D;
-pub const USER_RAM_START: u16 = 0x0380;
+/// Music voices (melody / bass / harmony), 8 bytes each:
+/// `[ptr lo, ptr hi, start lo, start hi, timer, volume, duty bits, -]`.
+pub const VOICES: [u16; 3] = [0x0380, 0x0388, 0x0390];
+pub const MU_ON: u16 = 0x0398; // bit per playing voice
+pub const MU_NOTE: u16 = 0x0399;
+pub const MU_ARG: u16 = 0x039A;
+pub const USER_RAM_START: u16 = 0x03A0;
 pub const USER_RAM_END: u16 = 0x0800;
 
 pub const PPUCTRL: u16 = 0x2000;
@@ -200,6 +208,7 @@ pub fn emit_core(e: &mut Emitter) {
     e.abs(STA, PPUSCROLL);
     e.label("__nmi_skip");
     e.jsr("__sfx_tick");
+    e.jsr("__music_tick");
     e.abs(INC, FRAME);
     e.imp(PLA);
     e.imp(TAY);

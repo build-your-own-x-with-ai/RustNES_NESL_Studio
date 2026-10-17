@@ -48,6 +48,8 @@ pub enum Param {
     Map,
     /// A `metasprite` declaration.
     Meta,
+    /// A `music` declaration.
+    Music,
 }
 
 pub struct Signature {
@@ -83,6 +85,9 @@ pub fn signature(name: &str) -> Option<Signature> {
         "metasprite" => sig!(U8, U8, U8, Meta => U8),
         "collide" => sig!(U8, U8, U8, U8, U8, U8, U8, U8 => U8),
         "sfx" => sig!(U8 => None),
+        // play_music takes 1 to 3 songs; the arity is checked in builtin_call
+        "play_music" => sig!(Music => None),
+        "stop_music" => sig!(=> None),
         _ => return None,
     })
 }
@@ -94,6 +99,10 @@ pub fn is_builtin_fn(name: &str) -> bool {
 impl Codegen {
     pub(crate) fn builtin_call(&mut self, name: &str, args: &[Expr], pos: Pos) -> R<Option<Type>> {
         let sig = signature(name).expect("caller checked");
+        if name == "play_music" {
+            self.play_music(args, pos)?;
+            return Ok(None);
+        }
         if args.len() != sig.params.len() {
             let s = if sig.params.len() == 1 { "" } else { "s" };
             return self.err(pos, format!("function `{name}` expects {} argument{s}, found {}", sig.params.len(), args.len()));
@@ -104,8 +113,10 @@ impl Codegen {
             "ppu_off" => self.e.jsr("__ppu_off"),
             "frame_count" => self.e.abs(LDA, FRAME),
             "rand" => self.e.jsr("__rand"),
+            "stop_music" => self.e.jsr("__stop_music"),
             "stop_sound" => {
                 self.e.imm(LDA, 0);
+                self.e.abs(STA, MU_ON);
                 self.e.abs(STA, SFX_TIMER);
                 self.e.abs(STA, APU_EN);
                 self.e.abs(STA, 0x4015);
@@ -323,6 +334,49 @@ impl Codegen {
         self.e.abs(STA, PTR2 + 1);
         self.e.imm(LDA, width);
         self.e.abs(STA, ARG2);
+    }
+
+    /// `play_music(melody[, bass[, harmony]])`: voices are set up while the engine is
+    /// stopped, and `MU_ON` is written last so the NMI never sees a half-initialised voice.
+    fn play_music(&mut self, args: &[Expr], pos: Pos) -> R<()> {
+        if args.is_empty() || args.len() > 3 {
+            return self.err(pos, format!("`play_music` takes 1 to 3 songs (melody, bass, harmony), found {}", args.len()));
+        }
+        let mut songs = Vec::new();
+        for (v, a) in args.iter().enumerate() {
+            let Some(Sym::Music { label, lowest }) = (match &a.kind {
+                ExprKind::Var(n) => self.lookup(n),
+                _ => None,
+            }) else {
+                return self.err(a.pos, "`play_music` expects music (declare it with `music NAME = \"...\"`)");
+            };
+            // Pulse channels (melody, harmony) reach down to A1; the triangle (bass) to A0.
+            let (floor, what) = if v == 1 { (9, "the bass voice (triangle) cannot play below A0") } else {
+                (21, "pulse voices cannot play below A1; pass this music as the bass (second) voice")
+            };
+            if let Some((n, npos)) = lowest {
+                if n < floor {
+                    return self.err(npos, format!("note too low: {what}"));
+                }
+            }
+            songs.push(label);
+        }
+        self.e.jsr("__stop_music");
+        for (v, label) in songs.iter().enumerate() {
+            let b = VOICES[v];
+            for (off, imm) in [(0u16, Operand::imm_lo(label)), (1, Operand::imm_hi(label))] {
+                self.e.ins(LDA, imm);
+                self.e.abs(STA, b + off);
+                self.e.abs(STA, b + 2 + off);
+            }
+            for (off, v) in [(4u16, 1u8), (5, 12), (6, 0x80)] {
+                self.e.imm(LDA, v);
+                self.e.abs(STA, b + off);
+            }
+        }
+        self.e.imm(LDA, (1u8 << songs.len()) - 1);
+        self.e.abs(STA, MU_ON);
+        Ok(())
     }
 
     fn map_label(&self, e: &Expr) -> R<(String, u8)> {
@@ -1127,6 +1181,177 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.abs(STA, 0x4015);
     e.imp(RTS);
 
+    emit_music(e);
+
     e.label("__sfx_table");
     e.items.push(crate::asm::Item::Bytes(SFX_TABLE.concat()));
+}
+
+/// The NMI-driven music engine: one generated routine per voice (absolute addressing).
+fn emit_music(e: &mut Emitter) {
+    use crate::asm::Val;
+    e.comment("---- runtime: music ----");
+    e.label("__music_tick");
+    for v in 0..3 {
+        e.jsr(&format!("__mu{v}"));
+    }
+    e.imp(RTS);
+
+    for (v, &b) in VOICES.iter().enumerate() {
+        let l = |s: &str| format!("__mu{v}_{s}");
+        e.label(&format!("__mu{v}"));
+        e.abs(LDA, MU_ON);
+        e.imm(AND, 1 << v);
+        e.br(BNE, &l("on"));
+        e.imp(RTS);
+        e.label(&l("on"));
+        e.abs(DEC, b + 4);
+        e.br(BEQ, &l("read"));
+        e.imp(RTS);
+        // Read events until one with a duration.
+        e.label(&l("read"));
+        e.abs(LDA, b);
+        e.abs(STA, NMI_PTR);
+        e.abs(LDA, b + 1);
+        e.abs(STA, NMI_PTR + 1);
+        e.imm(LDY, 0);
+        e.ins(LDA, Operand::IndY(NMI_PTR as u8));
+        e.abs(STA, MU_NOTE);
+        e.imp(INY);
+        e.ins(LDA, Operand::IndY(NMI_PTR as u8));
+        e.abs(STA, MU_ARG);
+        e.abs(LDA, b);
+        e.imp(CLC);
+        e.imm(ADC, 2);
+        e.abs(STA, b);
+        e.br(BCC, &l("nc"));
+        e.abs(INC, b + 1);
+        e.label(&l("nc"));
+        e.abs(LDA, MU_NOTE);
+        e.imm(CMP, crate::mml::EV_END);
+        e.br(BNE, &l("not_end"));
+        e.abs(LDA, b + 2);
+        e.abs(STA, b);
+        e.abs(LDA, b + 3);
+        e.abs(STA, b + 1);
+        e.jmp(&l("read"));
+        e.label(&l("not_end"));
+        e.imm(CMP, crate::mml::EV_REST);
+        e.br(BEQ, &l("rest"));
+        e.imm(CMP, crate::mml::EV_CONT);
+        e.br(BEQ, &l("cont"));
+        e.imm(CMP, 0x90);
+        e.br(BCS, &l("duty"));
+        e.imm(CMP, 0x80);
+        e.br(BCS, &l("vol"));
+        e.abs(LDA, MU_ARG);
+        e.abs(STA, b + 4);
+        e.jmp(&l("note"));
+        e.label(&l("duty"));
+        e.imm(AND, 0x03); // d -> d << 6
+        e.acc(LSR);
+        e.acc(ROR);
+        e.acc(ROR);
+        e.abs(STA, b + 6);
+        e.jmp(&l("read"));
+        e.label(&l("vol"));
+        e.imm(AND, 0x0F);
+        e.abs(STA, b + 5);
+        e.jmp(&l("read"));
+        e.label(&l("cont"));
+        e.abs(LDA, MU_ARG);
+        e.abs(STA, b + 4);
+        e.imp(RTS);
+        e.label(&l("rest"));
+        e.abs(LDA, MU_ARG);
+        e.abs(STA, b + 4);
+
+        if v == 1 {
+            // bass: triangle; a rest turns the channel off
+            e.abs(LDA, APU_EN);
+            e.imm(AND, !0x04u8);
+            e.abs(STA, APU_EN);
+            e.abs(STA, 0x4015);
+            e.imp(RTS);
+            e.label(&l("note"));
+            e.abs(LDX, MU_NOTE);
+            e.imm(LDA, 0xFF); // linear counter: hold
+            e.abs(STA, 0x4008);
+            // the triangle sounds an octave below a pulse with the same period
+            e.ins(LDA, Operand::AbsX(Val::Label("__per_lo".into(), 12)));
+            e.abs(STA, 0x400A);
+            e.ins(LDA, Operand::AbsX(Val::Label("__per_hi".into(), 12)));
+            e.abs(STA, 0x400B);
+            e.abs(LDA, APU_EN);
+            e.imm(ORA, 0x04);
+            e.abs(STA, APU_EN);
+            e.abs(STA, 0x4015);
+            e.imp(RTS);
+            continue;
+        }
+
+        let (reg, enable) = if v == 0 { (0x4000u16, 0x01u8) } else { (0x4004, 0x02) };
+        // harmony shares pulse 2 with sound effects and yields while one plays
+        let yield_to_sfx = |e: &mut Emitter, tag: &str| {
+            if v == 2 {
+                let free = format!("__mu{v}_free_{tag}");
+                e.abs(LDA, SFX_TIMER);
+                e.br(BEQ, &free);
+                e.abs(LDA, SFX_CH);
+                e.br(BNE, &free);
+                e.imp(RTS);
+                e.label(&free);
+            }
+        };
+        yield_to_sfx(e, "rest");
+        e.abs(LDA, b + 6);
+        e.imm(ORA, 0x30); // length halt + constant volume, volume 0
+        e.abs(STA, reg);
+        e.imp(RTS);
+        e.label(&l("note"));
+        yield_to_sfx(e, "note");
+        e.abs(LDX, MU_NOTE);
+        e.abs(LDA, b + 6);
+        e.imm(ORA, 0x30);
+        e.abs(ORA, b + 5);
+        e.abs(STA, reg);
+        e.imm(LDA, 0x08); // sweep off
+        e.abs(STA, reg + 1);
+        e.ins(LDA, Operand::AbsX(Val::Label("__per_lo".into(), 0)));
+        e.abs(STA, reg + 2);
+        e.ins(LDA, Operand::AbsX(Val::Label("__per_hi".into(), 0)));
+        e.abs(STA, reg + 3);
+        e.abs(LDA, APU_EN);
+        e.imm(ORA, enable);
+        e.abs(STA, APU_EN);
+        e.abs(STA, 0x4015);
+        e.imp(RTS);
+    }
+
+    // Stops the engine and silences its channels (pulse 2 only if no effect is using it).
+    e.label("__stop_music");
+    e.imm(LDA, 0);
+    e.abs(STA, MU_ON);
+    e.imm(LDA, 0x30);
+    e.abs(STA, 0x4000);
+    e.abs(LDA, SFX_TIMER);
+    e.br(BEQ, "__smu_p2");
+    e.abs(LDA, SFX_CH);
+    e.br(BEQ, "__smu_keep");
+    e.label("__smu_p2");
+    e.imm(LDA, 0x30);
+    e.abs(STA, 0x4004);
+    e.label("__smu_keep");
+    e.abs(LDA, APU_EN);
+    e.imm(AND, !0x04u8);
+    e.abs(STA, APU_EN);
+    e.abs(STA, 0x4015);
+    e.imp(RTS);
+
+    // Timer periods for notes 0-107 (pulse uses n, triangle n + 12).
+    let periods: Vec<u16> = (0..108).map(crate::mml::pulse_period).collect();
+    e.label("__per_lo");
+    e.items.push(crate::asm::Item::Bytes(periods.iter().map(|p| *p as u8).collect()));
+    e.label("__per_hi");
+    e.items.push(crate::asm::Item::Bytes(periods.iter().map(|p| (p >> 8) as u8).collect()));
 }

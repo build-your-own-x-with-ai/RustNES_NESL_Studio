@@ -136,3 +136,65 @@ fn map_errors() {
     assert!(m(&many_rows).contains("30"));
     assert!(m("const P: [u8] = [1]; fn main() { draw_map(P); }").contains("map"));
 }
+
+// ---------------------------------------------------------------- US3 metasprite
+
+fn oam_shadow(r: &Run, slot: u16) -> [u8; 4] {
+    let a = 0x0200 + slot * 4;
+    [r.nes.peek(a), r.nes.peek(a + 1), r.nes.peek(a + 2), r.nes.peek(a + 3)]
+}
+
+#[test]
+fn metasprite_lays_out_pieces_and_returns_next_slot() {
+    let r = run("
+        metasprite HERO = [(0, 0, 1), (8, 0, 2), (0, 8, 3), (8, 8, 4, 0x40)];
+        var next: u8; var x: u8 = 100;
+        fn main() { next = metasprite(2, x, 50, HERO); }");
+    assert_eq!(r.u8("next"), 6);
+    assert_eq!(oam_shadow(&r, 2), [50, 1, 0, 100]);
+    assert_eq!(oam_shadow(&r, 3), [50, 2, 0, 108]);
+    assert_eq!(oam_shadow(&r, 4), [58, 3, 0, 100]);
+    assert_eq!(oam_shadow(&r, 5), [58, 4, 0x40, 108]);
+}
+
+#[test]
+fn metasprite_negative_offsets_and_offscreen_pieces() {
+    let r = run("
+        metasprite M = [(-8, 0, 1), (0, -8, 2), (8, 0, 3)];
+        fn main() { metasprite(0, 100, 100, M); metasprite(3, 4, 4, M); metasprite(6, 250, 20, M); }");
+    assert_eq!(oam_shadow(&r, 0), [100, 1, 0, 92]);
+    assert_eq!(oam_shadow(&r, 1), [92, 2, 0, 100]);
+    assert_eq!(oam_shadow(&r, 3)[0], 0xFF, "x = 4 - 8 wraps: hidden");
+    assert_eq!(oam_shadow(&r, 4)[0], 0xFF, "y = 4 - 8 wraps: hidden");
+    assert_eq!(oam_shadow(&r, 5), [4, 3, 0, 12]);
+    assert_eq!(oam_shadow(&r, 8)[0], 0xFF, "x = 250 + 8 wraps: hidden");
+    assert_eq!(oam_shadow(&r, 6), [20, 1, 0, 242]);
+}
+
+#[test]
+fn metasprite_errors() {
+    let m = |src: &str| errors(src)[0].message.clone();
+    assert!(m("metasprite M = [(200, 0, 1)]; fn main() {}").contains("does not fit"));
+    assert!(m("const P: [u8] = [1]; fn main() { metasprite(0, 0, 0, P); }").contains("metasprite"));
+}
+
+// ---------------------------------------------------------------- US4 collide
+
+#[test]
+fn collide_handles_overlap_touching_containment_and_255_edge() {
+    let r = run("
+        var c: [u8; 8]; var calls: u8;
+        fn n(v: u8) -> u8 { calls += 1; return v; }
+        fn main() {
+            c[0] = collide(10, 10, 8, 8, 14, 14, 8, 8);
+            c[1] = collide(10, 10, 8, 8, 18, 10, 8, 8);
+            c[2] = collide(10, 10, 8, 8, 10, 18, 8, 8);
+            c[3] = collide(0, 0, 100, 100, 40, 40, 8, 8);
+            c[4] = collide(250, 10, 16, 8, 2, 10, 8, 8);
+            c[5] = collide(250, 10, 16, 8, 252, 12, 8, 8);
+            c[6] = collide(n(10), n(10), n(8), n(8), n(12), n(12), n(4), n(4));
+            if collide(1, 1, 1, 1, 5, 5, 1, 1) { c[7] = 9; }
+        }");
+    assert_eq!(r.bytes("c"), vec![1, 0, 0, 1, 0, 1, 1, 0]);
+    assert_eq!(r.u8("calls"), 8, "each argument is evaluated exactly once");
+}

@@ -29,6 +29,8 @@ pub enum Param {
     Data,
     /// A string literal or a constant array.
     Text,
+    /// A `map` declaration.
+    Map,
 }
 
 pub struct Signature {
@@ -57,6 +59,8 @@ pub fn signature(name: &str) -> Option<Signature> {
         "peek" => sig!(U16 => U8),
         "poke" => sig!(U16, U8 => None),
         "play_tone" => sig!(U16 => None),
+        "draw_map" => sig!(Map => None),
+        "map_tile" => sig!(Map, U8, U8 => U8),
         _ => return None,
     })
 }
@@ -176,6 +180,17 @@ impl Codegen {
                 self.slots(&list)?;
                 self.e.jsr("__sprite");
             }
+            "draw_map" => {
+                let label = self.map_label(&args[0])?;
+                self.pointer(&label);
+                self.e.jsr("__draw_map");
+            }
+            "map_tile" => {
+                let label = self.map_label(&args[0])?;
+                self.slots(&[(&args[1], Type::U8, ARG0), (&args[2], Type::U8, ARG1)])?;
+                self.pointer(&label);
+                self.e.jsr("__map_tile");
+            }
             _ => unreachable!("missing builtin {name}"),
         }
         Ok(sig.ret)
@@ -215,6 +230,15 @@ impl Codegen {
             }
         }
         Ok(())
+    }
+
+    fn map_label(&self, e: &Expr) -> R<String> {
+        if let ExprKind::Var(n) = &e.kind {
+            if let Some(Sym::Map { label }) = self.lookup(n) {
+                return Ok(label);
+            }
+        }
+        self.err(e.pos, "expected a map (declare one with `map NAME = [...]`)")
     }
 
     fn pointer(&mut self, label: &str) {
@@ -465,6 +489,77 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.abs(DEC, ARG1);
     e.jmp("__vram_fill_loop");
     e.label("__vram_fill_done");
+    e.imp(RTS);
+
+    e.comment("---- runtime: maps ----");
+    // PTR = map. Draws nametable 0 with rendering off, restoring rendering afterwards.
+    e.label("__draw_map");
+    e.abs(LDA, MASK_SHADOW);
+    e.imp(PHA);
+    e.br(BEQ, "__dm_off");
+    e.jsr("__wait_vblank");
+    e.jsr("__ppu_off");
+    e.label("__dm_off");
+    e.abs(BIT, PPUSTATUS);
+    e.imm(LDA, 0x20);
+    e.abs(STA, PPUADDR);
+    e.imm(LDA, 0x00);
+    e.abs(STA, PPUADDR);
+    e.imm(LDX, 4); // 3 full pages + 192 bytes = 960
+    e.imm(LDY, 0);
+    e.label("__dm_loop");
+    e.imm(CPX, 1);
+    e.br(BNE, "__dm_byte");
+    e.imm(CPY, 192);
+    e.br(BEQ, "__dm_attr");
+    e.label("__dm_byte");
+    e.ins(LDA, Operand::IndY(PTR as u8));
+    e.abs(STA, PPUDATA);
+    e.imp(INY);
+    e.br(BNE, "__dm_loop");
+    e.abs(INC, PTR + 1);
+    e.imp(DEX);
+    e.jmp("__dm_loop");
+    e.label("__dm_attr");
+    e.imm(LDA, 0);
+    e.imm(LDX, 64);
+    e.label("__dm_attr_loop");
+    e.abs(STA, PPUDATA);
+    e.imp(DEX);
+    e.br(BNE, "__dm_attr_loop");
+    e.jsr("__fix_scroll");
+    e.imp(PLA);
+    e.br(BEQ, "__dm_done");
+    e.jmp("__ppu_on");
+    e.label("__dm_done");
+    e.imp(RTS);
+
+    // PTR = map, ARG0 = tx, ARG1 = ty; returns the tile, or 0 when out of bounds.
+    e.label("__map_tile");
+    e.abs(LDA, ARG0);
+    e.imm(CMP, 32);
+    e.br(BCS, "__mt_out");
+    e.abs(LDA, ARG1);
+    e.imm(CMP, 30);
+    e.br(BCS, "__mt_out");
+    // PTR += ty * 32
+    e.imm(LDX, 0);
+    e.abs(STX, TMP1);
+    for _ in 0..5 {
+        e.acc(ASL);
+        e.abs(ROL, TMP1);
+    }
+    e.imp(CLC);
+    e.abs(ADC, PTR);
+    e.abs(STA, PTR);
+    e.abs(LDA, TMP1);
+    e.abs(ADC, PTR + 1);
+    e.abs(STA, PTR + 1);
+    e.abs(LDY, ARG0);
+    e.ins(LDA, Operand::IndY(PTR as u8));
+    e.imp(RTS);
+    e.label("__mt_out");
+    e.imm(LDA, 0);
     e.imp(RTS);
 
     e.comment("---- runtime: sprites, input, random, sound ----");

@@ -24,8 +24,8 @@ description: "Task list for game development API"
 
 ## Phase 4: US2 map (P2)
 
-- [ ] T306 [US2] 测试：draw_map 命名表/属性表、渲染中调用、map_tile 边界、编译错误
-- [ ] T307 [US2] 实现：map 数据、`draw_map`、`map_tile`
+- [x] T306 [US2] 测试：draw_map 命名表/属性表、渲染中调用、map_tile 边界、编译错误
+- [x] T307 [US2] 实现：map 数据、`draw_map`、`map_tile`
 
 ## Phase 5: US3 metasprite (P2)
 

@@ -26,6 +26,10 @@ pub(crate) enum Sym {
     Struct(String),
     /// Marker for struct arrays; field access routes to Array("name.field", ...).
     StructArray(String),
+    /// A 32x30 background screen in ROM.
+    Map { label: String },
+    /// A metasprite table in ROM: `[count, (dx, dy, tile, attr)...]`.
+    Metasprite { label: String },
 }
 
 struct FnSig {
@@ -344,7 +348,28 @@ impl Codegen {
                     }
                 }
             }
-            Decl::Map { pos, .. } | Decl::Metasprite { pos, .. } => {
+            Decl::Map { name, rows, pos } => {
+                self.define(name, *pos)?;
+                if rows.len() > 30 {
+                    return self.err(rows[30].1, format!("a map has at most 30 rows, found {}", rows.len()));
+                }
+                let mut bytes = vec![b' '; 960];
+                for (y, (row, rpos)) in rows.iter().enumerate() {
+                    if !row.is_ascii() {
+                        return self.err(*rpos, "map rows may only contain ASCII characters");
+                    }
+                    if row.len() > 32 {
+                        return self.err(*rpos, format!("map row {} has {} columns; the limit is 32", y + 1, row.len()));
+                    }
+                    for (x, c) in row.bytes().enumerate() {
+                        bytes[y * 32 + x] = if c == b'.' { b' ' } else { c };
+                    }
+                }
+                let label = format!("m_{name}");
+                self.globals.insert(name.clone(), Sym::Map { label: label.clone() });
+                self.data.push((label, bytes));
+            }
+            Decl::Metasprite { pos, .. } => {
                 return self.err(*pos, "not implemented yet");
             }
             Decl::Tile { index, rows, pos } => {
@@ -572,6 +597,8 @@ impl Codegen {
                 }
                 Some(Sym::Struct(_)) => self.err(e.pos, format!("`{name}` is a struct; access a field with `{name}.field`")),
                 Some(Sym::StructArray(_)) => self.err(e.pos, format!("`{name}` is a struct array; access a field with `{name}[i].field`")),
+                Some(Sym::Map { .. }) => self.err(e.pos, format!("`{name}` is a map; use `draw_map({name})` or `map_tile({name}, x, y)`")),
+                Some(Sym::Metasprite { .. }) => self.err(e.pos, format!("`{name}` is a metasprite; draw it with `metasprite(slot, x, y, {name})`")),
                 Some(Sym::Const(_)) => unreachable!(),
                 None => Err(self.unknown_var(name, e.pos)),
             },

@@ -198,3 +198,47 @@ fn collide_handles_overlap_touching_containment_and_255_edge() {
     assert_eq!(r.bytes("c"), vec![1, 0, 0, 1, 0, 1, 1, 0]);
     assert_eq!(r.u8("calls"), 8, "each argument is evaluated exactly once");
 }
+
+// ---------------------------------------------------------------- US5 sfx
+
+fn writes_to(r: &Run, reg: u16) -> Vec<u8> {
+    r.nes.bus.apu_writes.iter().filter(|(a, _)| *a == reg).map(|(_, v)| *v).collect()
+}
+
+#[test]
+fn sfx_jump_slides_pitch_fades_and_stops() {
+    let r = run_frames("fn main() { ppu_on(); sfx(SFX_JUMP); loop { wait_vblank(); } }", 40, |_| {});
+    let vols: Vec<u8> = writes_to(&r, 0x4004).iter().map(|v| v & 0x0F).collect();
+    assert!(vols.len() >= 10, "{vols:?}");
+    assert!(vols.windows(2).all(|w| w[1] <= w[0]), "volume never rises: {vols:?}");
+    let lows = writes_to(&r, 0x4006);
+    assert!(lows.len() >= 10 && lows.windows(2).all(|w| w[1] < w[0]), "pitch rises (period falls): {lows:x?}");
+    let en = writes_to(&r, 0x4015);
+    assert_eq!(en.first().map(|v| v & 0x02), Some(0x02), "pulse 2 enabled: {en:x?}");
+    assert_eq!(en.last().map(|v| v & 0x02), Some(0), "and disabled when done: {en:x?}");
+}
+
+#[test]
+fn sfx_explode_uses_the_noise_channel() {
+    let r = run_frames("fn main() { ppu_on(); sfx(SFX_EXPLODE); loop { wait_vblank(); } }", 5, |_| {});
+    assert!(!writes_to(&r, 0x400C).is_empty());
+    assert!(writes_to(&r, 0x4015).iter().any(|v| v & 0x08 != 0));
+    assert!(writes_to(&r, 0x4004).is_empty(), "pulse 2 untouched");
+}
+
+#[test]
+fn sfx_and_play_tone_play_together_and_stop_sound_stops_both() {
+    let r = run_frames("var t: u8;
+        fn main() { ppu_on(); play_tone(0x1AB); sfx(SFX_COIN);
+            loop { wait_vblank(); t += 1; if t == 3 { stop_sound(); } } }", 8, |_| {});
+    let en = writes_to(&r, 0x4015);
+    assert!(en.iter().any(|v| v & 0x03 == 0x03), "both channels on at once: {en:x?}");
+    assert_eq!(en.last(), Some(&0), "{en:x?}");
+    let after_stop = r.nes.bus.apu_writes.iter().rposition(|w| *w == (0x4015, 0)).unwrap();
+    assert!(!r.nes.bus.apu_writes[after_stop..].iter().any(|(a, _)| *a == 0x4004), "sfx stopped too");
+}
+
+#[test]
+fn every_sfx_constant_compiles() {
+    build("fn main() { sfx(SFX_JUMP); sfx(SFX_COIN); sfx(SFX_SHOOT); sfx(SFX_HIT); sfx(SFX_EXPLODE); }");
+}

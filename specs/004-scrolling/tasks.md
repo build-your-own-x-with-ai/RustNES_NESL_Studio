@@ -23,8 +23,8 @@ description: "Task list for horizontal scrolling"
 
 ## Phase 4: US2 镜头 (P1)
 
-- [ ] T405 [US2] 测试：跟随/钳制/限速、往返 4 屏可见列全部正确、滚动寄存器、渲染关闭时直写、零违规
-- [ ] T406 [US2] 实现：`__camera_follow`、`__stream_col`、`__stream_attr`、`camera_x`
+- [x] T405 [US2] 测试：跟随/钳制/限速、往返 4 屏可见列全部正确、滚动寄存器、渲染关闭时直写、零违规
+- [x] T406 [US2] 实现：`__camera_follow`、`__stream_col`、`__stream_attr`、`camera_x`
 
 ## Phase 5: US3 调色板分区 (P2)
 

@@ -78,6 +78,8 @@ pub fn signature(name: &str) -> Option<Signature> {
         "play_tone" => sig!(U16 => None),
         "draw_map" => sig!(Map => None),
         "map_tile" => sig!(Map, U16, U8 => U8),
+        "camera_follow" => sig!(U16, Map => None),
+        "camera_x" => sig!(=> Some(Type::U16)),
         "metasprite" => sig!(U8, U8, U8, Meta => U8),
         "collide" => sig!(U8, U8, U8, U8, U8, U8, U8, U8 => U8),
         "sfx" => sig!(U8 => None),
@@ -205,6 +207,16 @@ impl Codegen {
                 let list: Vec<(&Expr, Type, u16)> = args.iter().zip(slots).map(|(a, s)| (a, Type::U8, s)).collect();
                 self.slots(&list)?;
                 self.e.jsr("__sprite");
+            }
+            "camera_x" => {
+                self.e.abs(LDA, CAM_X);
+                self.e.abs(LDX, CAM_X + 1);
+            }
+            "camera_follow" => {
+                let (label, width) = self.map_label(&args[1])?;
+                self.slots(&[(&args[0], Type::U16, ARG0)])?;
+                self.map_pointers(&label, width);
+                self.e.jsr("__camera_follow");
             }
             "draw_map" => {
                 let (label, width) = self.map_label(&args[0])?;
@@ -757,6 +769,139 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.br(BEQ, "__dm_done");
     e.jmp("__ppu_on");
     e.label("__dm_done");
+    e.imp(RTS);
+
+    // ARG0:ARG1 = followed x, PTR / PTR2 / ARG2 = map. Moves the camera at most 8 px toward
+    // x - 120 (clamped to the map), streams in the newly visible column, then updates scroll.
+    e.label("__camera_follow");
+    e.abs(INC, VQ_LOCK); // the NMI keeps the previous scroll until we are done
+    e.jsr("__set_map");
+    // target = x - 120, clamped to [0, max]; max = width * 8 - 256 (TMP4:TMP5)
+    e.abs(LDA, ARG2);
+    e.imm(CMP, 33);
+    e.br(BCS, "__cf_wide");
+    e.jmp("__cf_done"); // a single screen never scrolls
+    e.label("__cf_wide");
+    e.imm(LDA, 0);
+    e.abs(STA, TMP5);
+    e.abs(LDA, ARG2);
+    for _ in 0..3 {
+        e.acc(ASL);
+        e.abs(ROL, TMP5);
+    }
+    e.abs(STA, TMP4);
+    e.abs(DEC, TMP5); // - 256
+    e.abs(LDA, ARG0);
+    e.imp(SEC);
+    e.imm(SBC, 120);
+    e.abs(STA, TMP0);
+    e.abs(LDA, ARG1);
+    e.imm(SBC, 0);
+    e.abs(STA, TMP1);
+    e.br(BCS, "__cf_not_neg");
+    e.imm(LDA, 0);
+    e.abs(STA, TMP0);
+    e.abs(STA, TMP1);
+    e.label("__cf_not_neg");
+    e.abs(LDA, TMP4); // if max < target: target = max
+    e.abs(CMP, TMP0);
+    e.abs(LDA, TMP5);
+    e.abs(SBC, TMP1);
+    e.br(BCS, "__cf_clamped");
+    e.abs(LDA, TMP4);
+    e.abs(STA, TMP0);
+    e.abs(LDA, TMP5);
+    e.abs(STA, TMP1);
+    e.label("__cf_clamped");
+    // diff = target - cam; step limited to +-8
+    e.abs(LDA, TMP0);
+    e.imp(SEC);
+    e.abs(SBC, CAM_X);
+    e.abs(STA, TMP2);
+    e.abs(LDA, TMP1);
+    e.abs(SBC, CAM_X + 1);
+    e.br(BMI, "__cf_left");
+    e.br(BNE, "__cf_right_max"); // diff >= 256
+    e.abs(LDA, TMP2);
+    e.imm(CMP, 9);
+    e.br(BCC, "__cf_apply");
+    e.label("__cf_right_max");
+    e.imm(LDA, 8);
+    e.abs(STA, TMP2);
+    e.imm(LDA, 0);
+    e.jmp("__cf_apply_hi");
+    e.label("__cf_left");
+    e.imm(CMP, 0xFF);
+    e.br(BNE, "__cf_left_max"); // diff <= -256
+    e.abs(LDA, TMP2);
+    e.imm(CMP, 0xF8);
+    e.br(BCS, "__cf_apply_neg");
+    e.label("__cf_left_max");
+    e.imm(LDA, 0xF8);
+    e.abs(STA, TMP2);
+    e.label("__cf_apply_neg");
+    e.imm(LDA, 0xFF);
+    e.jmp("__cf_apply_hi");
+    e.label("__cf_apply");
+    e.imm(LDA, 0);
+    e.label("__cf_apply_hi");
+    e.abs(STA, TMP3);
+    e.abs(LDA, CAM_X);
+    e.imp(CLC);
+    e.abs(ADC, TMP2);
+    e.abs(STA, CAM_X);
+    e.abs(LDA, CAM_X + 1);
+    e.abs(ADC, TMP3);
+    e.abs(STA, CAM_X + 1);
+    // new camera column = cam >> 3
+    e.abs(LDA, CAM_X + 1);
+    e.abs(STA, TMP1);
+    e.abs(LDA, CAM_X);
+    for _ in 0..3 {
+        e.abs(LSR, TMP1);
+        e.acc(ROR);
+    }
+    e.abs(CMP, CAM_COL);
+    e.br(BEQ, "__cf_scroll");
+    e.abs(LDX, CAM_COL);
+    e.abs(STA, CAM_COL);
+    e.imp(TXA);
+    e.abs(CMP, CAM_COL);
+    e.br(BCS, "__cf_went_left");
+    // moved right: column cam_col + 32 just came into view
+    e.abs(LDA, CAM_COL);
+    e.imp(CLC);
+    e.imm(ADC, 32);
+    e.jmp("__cf_stream");
+    e.label("__cf_went_left");
+    e.abs(LDA, CAM_COL);
+    e.label("__cf_stream");
+    e.imp(PHA);
+    e.jsr("__stream_col");
+    e.imp(PLA);
+    e.abs(STA, SC_G);
+    e.imm(AND, 0x03);
+    e.br(BNE, "__cf_scroll"); // attributes change only at 4-column group boundaries
+    e.abs(LDA, SC_G);
+    e.acc(LSR);
+    e.acc(LSR);
+    e.jsr("__attr_group");
+    e.label("__cf_scroll");
+    // scroll x = cam & 255, nametable select bit = (cam >> 8) & 1
+    e.abs(LDA, CAM_X);
+    e.abs(STA, SCROLL_X);
+    e.abs(LDA, CAM_X + 1);
+    e.imm(AND, 0x01);
+    e.abs(STA, TMP0);
+    e.abs(LDA, CTRL_SHADOW);
+    e.imm(AND, 0xFE);
+    e.abs(ORA, TMP0);
+    e.abs(STA, CTRL_SHADOW);
+    e.abs(LDA, MASK_SHADOW);
+    e.br(BNE, "__cf_done");
+    e.jsr("__fix_scroll"); // rendering off: apply now (no NMI does it for us)
+    e.label("__cf_done");
+    e.abs(DEC, VQ_LOCK);
     e.imp(RTS);
 
     // Remembers the map passed in PTR / PTR2 / ARG2 as the one being drawn or followed.

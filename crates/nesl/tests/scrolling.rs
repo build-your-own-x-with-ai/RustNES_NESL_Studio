@@ -99,8 +99,11 @@ fn camera_scrolls_across_four_screens_and_back_without_glitches() {
             let cam = r.u16("cam");
             max_cam = max_cam.max(cam);
             if f % 3 == 0 {
-                // the scroll the PPU used this frame matches the camera of the previous one
-                assert_visible_columns(&r, cam, width, &format!("target {target}, frame {f}"));
+                // Check what the PPU actually shows: the scroll latched by the last NMI, which
+                // lags the camera variable by at most one 8-pixel step.
+                let hw = hardware_scroll(&r);
+                let shown = (cam.saturating_sub(16)..=cam + 16).find(|w| w % 512 == hw).unwrap_or_else(|| panic!("hw {hw} cam {cam} frame {f} target {target}"));
+                assert_visible_columns(&r, shown, width, &format!("target {target}, frame {f}"));
             }
             nes = r.nes;
         }

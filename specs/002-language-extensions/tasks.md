@@ -29,8 +29,8 @@ description: "Task list for NESL language extensions"
 
 ## Phase 5: US3 u16 数组与局部数组 (P2)
 
-- [ ] T208 [US3] 测试：u16/i8 RAM 数组与常量表、局部数组清零 `crates/nesl/tests/lang2.rs`
-- [ ] T209 [US3] 实现数组元素类型与局部数组 `crates/nesl/src/codegen.rs`
+- [x] T208 [US3] 测试：u16/i8 RAM 数组与常量表、局部数组清零 `crates/nesl/tests/lang2.rs`
+- [x] T209 [US3] 实现数组元素类型与局部数组 `crates/nesl/src/codegen.rs`
 
 ## Phase 6: US4 match (P3)
 

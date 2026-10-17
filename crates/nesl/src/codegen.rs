@@ -230,6 +230,48 @@ impl Codegen {
         Ok(())
     }
 
+    /// Allocates `[elem; len]`; u16 arrays get a low-byte table then a high-byte table.
+    fn alloc_array(&mut self, elem: Type, len: &Expr, pos: Pos) -> R<(Sym, u16, u16)> {
+        let n = self.const_expr(len, "array length")?;
+        if !(1..=256).contains(&n) {
+            return self.err(len.pos, "array length must be between 1 and 256");
+        }
+        let size = n as u16 * if elem == Type::U16 { 2 } else { 1 };
+        let addr = self.alloc(size, false, pos)?;
+        Ok((Sym::Array { addr, len: n as u16, elem }, addr, size))
+    }
+
+    /// Allocates a struct (`len == None`) or struct array; returns the symbols to bind
+    /// (`name` plus one per field) and the contiguous (addr, size) region.
+    fn alloc_struct(&mut self, name: &str, sname: &str, len: Option<&Expr>, pos: Pos) -> R<(Vec<(String, Sym)>, u16, u16)> {
+        let Some(fields) = self.structs.get(sname).cloned() else {
+            return self.err(pos, format!("unknown struct `{sname}`"));
+        };
+        let mut syms = Vec::new();
+        let mut start = None;
+        let mut total = 0u16;
+        for (fname, fty) in &fields {
+            let (sym, addr, size) = match len {
+                None => {
+                    let size = if *fty == Type::U16 { 2 } else { 1 };
+                    let addr = self.alloc(size, false, pos)?;
+                    (Sym::Var { addr, ty: *fty }, addr, size)
+                }
+                Some(len) => self.alloc_array(*fty, len, pos)?,
+            };
+            start.get_or_insert(addr);
+            total += size;
+            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size });
+            syms.push((format!("{name}.{fname}"), sym));
+        }
+        let marker = match len {
+            None => Sym::Struct(sname.to_string()),
+            Some(_) => Sym::StructArray(sname.to_string()),
+        };
+        syms.push((name.to_string(), marker));
+        Ok((syms, start.unwrap(), total))
+    }
+
     fn const_expr(&self, e: &Expr, what: &str) -> R<i64> {
         self.const_val(e).ok_or_else(|| Diagnostic::new(e.pos, format!("{what} must be a constant expression")))
     }
@@ -241,53 +283,41 @@ impl Codegen {
                 let v = self.const_expr(value, "constant value")?;
                 self.globals.insert(name.clone(), Sym::Const(v));
             }
-            Decl::Data { name, elems, pos, .. } => {
+            Decl::Data { name, elem, elems, pos } => {
                 self.define(name, *pos)?;
-                let mut bytes = Vec::with_capacity(elems.len());
-                for el in elems {
-                    bytes.push(fit(self.const_expr(el, "array element")?, Type::U8, el.pos)? as u8);
+                let max = if *elem == Type::U16 { 256 } else { 0xFFFF };
+                if elems.is_empty() || elems.len() > max {
+                    return self.err(*pos, format!("constant {elem} array must have between 1 and {max} elements"));
                 }
-                if bytes.is_empty() || bytes.len() > 0xFFFF {
-                    return self.err(*pos, "constant array must have between 1 and 65535 elements");
+                // u16 tables are split into a low-byte table followed by a high-byte table.
+                let mut lo = Vec::with_capacity(elems.len());
+                let mut hi = Vec::new();
+                for el in elems {
+                    let v = fit(self.const_expr(el, "array element")?, *elem, el.pos)?;
+                    lo.push(v as u8);
+                    hi.push((v >> 8) as u8);
+                }
+                if *elem == Type::U16 {
+                    lo.extend(hi);
                 }
                 let label = format!("d_{name}");
-                self.globals.insert(name.clone(), Sym::Data { label: label.clone(), len: bytes.len() as u16, elem: Type::U8 });
-                self.data.push((label, bytes));
+                self.globals.insert(name.clone(), Sym::Data { label: label.clone(), len: elems.len() as u16, elem: *elem });
+                self.data.push((label, lo));
             }
             Decl::Struct { .. } => {}
             Decl::Var { name, ty, init, pos } => {
                 self.define(name, *pos)?;
                 match ty {
-                    VarType::Struct(sname) => {
-                        let Some(fields) = self.structs.get(sname).cloned() else {
-                            return self.err(*pos, format!("unknown struct `{sname}`"));
+                    VarType::Struct(sname) | VarType::StructArray(sname, _) => {
+                        if init.is_some() {
+                            return self.err(*pos, "struct variables cannot have an initializer (they start zeroed)");
+                        }
+                        let len = match ty {
+                            VarType::StructArray(_, len) => Some(len),
+                            _ => None,
                         };
-                        let size: u16 = fields.iter().map(|(_, t)| if *t == Type::U16 { 2 } else { 1 }).sum();
-                        let base = self.alloc(size, false, *pos)?;
-                        let mut off = 0u16;
-                        for (fname, fty) in &fields {
-                            let addr = base + off;
-                            self.globals.insert(format!("{name}.{fname}"), Sym::Var { addr, ty: *fty });
-                            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size: if *fty == Type::U16 { 2 } else { 1 } });
-                            off += if *fty == Type::U16 { 2 } else { 1 };
-                        }
-                        self.globals.insert(name.clone(), Sym::Struct(sname.clone()));
-                    }
-                    VarType::StructArray(sname, len_expr) => {
-                        let Some(fields) = self.structs.get(sname).cloned() else {
-                            return self.err(*pos, format!("unknown struct `{sname}`"));
-                        };
-                        let n = self.const_expr(len_expr, "array length")?;
-                        if !(1..=256).contains(&n) {
-                            return self.err(len_expr.pos, "array length must be between 1 and 256");
-                        }
-                        for (fname, fty) in &fields {
-                            let size = if *fty == Type::U16 { 2 } else { 1 };
-                            let addr = self.alloc(n as u16 * size, false, *pos)?;
-                            self.globals.insert(format!("{name}.{fname}"), Sym::Array { addr, len: n as u16, elem: *fty });
-                            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size: n as u16 * size });
-                        }
-                        self.globals.insert(name.clone(), Sym::StructArray(sname.clone()));
+                        let (syms, _, _) = self.alloc_struct(name, sname, len, *pos)?;
+                        self.globals.extend(syms);
                     }
                     VarType::Scalar(t) => {
                         let size = if *t == Type::U16 { 2 } else { 1 };
@@ -301,17 +331,13 @@ impl Codegen {
                         self.globals.insert(name.clone(), Sym::Var { addr, ty: *t });
                         self.vars.insert(name.clone(), VarInfo { addr, size });
                     }
-                    VarType::Array(_, len) => {
-                        let n = self.const_expr(len, "array length")?;
-                        if !(1..=256).contains(&n) {
-                            return self.err(len.pos, "array length must be between 1 and 256");
-                        }
+                    VarType::Array(elem, len) => {
                         if init.is_some() {
                             return self.err(*pos, "RAM arrays cannot have an initializer (they start zeroed)");
                         }
-                        let addr = self.alloc(n as u16, false, *pos)?;
-                        self.globals.insert(name.clone(), Sym::Array { addr, len: n as u16, elem: Type::U8 });
-                        self.vars.insert(name.clone(), VarInfo { addr, size: n as u16 });
+                        let (sym, addr, size) = self.alloc_array(*elem, len, *pos)?;
+                        self.globals.insert(name.clone(), sym);
+                        self.vars.insert(name.clone(), VarInfo { addr, size });
                     }
                 }
             }
@@ -622,7 +648,9 @@ impl Codegen {
                 Some(Sym::Var { addr, ty: Type::U8 | Type::I8 }) => Some(Operand::abs(addr)),
                 _ => None,
             },
-            ExprKind::Index(name, idx) => self.const_index(name, idx, e.pos)?.map(Operand::Abs),
+            ExprKind::Index(name, idx) if self.array_base(name, e.pos)?.2 != Type::U16 => {
+                self.const_index(name, idx, e.pos)?.map(Operand::Abs)
+            }
             _ => None,
         })
     }
@@ -750,13 +778,25 @@ impl Codegen {
         Ok(())
     }
 
-    /// Loads `name[idx]` into A.
+    /// Loads `name[idx]` into A (8-bit elements) or A:X (u16 elements).
     fn index(&mut self, name: &str, idx: &Expr, pos: Pos) -> R<()> {
+        let (base, len, elem) = self.array_base(name, pos)?;
+        let hi = Self::offset(&base, len);
         if let Some(v) = self.const_index(name, idx, pos)? {
-            self.e.ins(LDA, Operand::Abs(v));
+            self.e.ins(LDA, Operand::Abs(v.clone()));
+            if elem == Type::U16 {
+                self.e.ins(LDX, Operand::Abs(Self::offset(&v, len)));
+            }
             return Ok(());
         }
-        let (base, _, _) = self.array_base(name, pos)?;
+        if elem == Type::U16 {
+            self.index_to_x(idx)?;
+            self.e.imp(TXA);
+            self.e.imp(TAY);
+            self.e.ins(LDA, Operand::AbsY(base));
+            self.e.ins(LDX, Operand::AbsY(hi));
+            return Ok(());
+        }
         self.index_to_x(idx)?;
         self.e.ins(LDA, Operand::AbsX(base));
         Ok(())
@@ -1279,18 +1319,21 @@ impl Codegen {
                     Some(_) => return self.err(*ipos, format!("`{name}` is not an array")),
                     None => return Err(self.unknown_var(name, *ipos)),
                 };
+                let (_, len, ety) = self.array_base(name, *ipos)?;
                 let elem = Expr { kind: ExprKind::Index(name.clone(), Box::new(idx.clone())), pos: *ipos };
                 let full = self.compound(elem, *op, value);
-                self.check_fits(&full, Type::U8)?;
-                if let Some(Val::Num(a)) = self.const_index(name, idx, *ipos)? {
-                    self.expr(&full, Type::U8)?;
+                self.check_fits(&full, ety)?;
+                if ety == Type::U16 {
+                    self.store_u16_elem(addr, len, idx, &full)?;
+                } else if let Some(Val::Num(a)) = self.const_index(name, idx, *ipos)? {
+                    self.expr(&full, ety)?;
                     self.e.abs(STA, a);
                 } else if self.operand8(idx)?.is_some() {
-                    self.expr(&full, Type::U8)?;
+                    self.expr(&full, ety)?;
                     self.index_to_x(idx)?;
                     self.e.ins(STA, Operand::abs_x(addr));
                 } else {
-                    self.expr(&full, Type::U8)?;
+                    self.expr(&full, ety)?;
                     self.e.imp(PHA);
                     self.index_to_x(idx)?;
                     self.e.imp(PLA);
@@ -1359,7 +1402,20 @@ impl Codegen {
                 }
                 self.e.imp(RTS);
             }
-            Stmt::LetZeroed { pos, .. } | Stmt::Match { pos, .. } => {
+            Stmt::LetZeroed { name, ty, pos } => {
+                let (syms, addr, size) = match ty {
+                    VarType::Array(elem, len) => {
+                        let (sym, addr, size) = self.alloc_array(*elem, len, *pos)?;
+                        (vec![(name.clone(), sym)], addr, size)
+                    }
+                    VarType::Struct(sname) => self.alloc_struct(name, sname, None, *pos)?,
+                    VarType::StructArray(sname, len) => self.alloc_struct(name, sname, Some(len), *pos)?,
+                    VarType::Scalar(_) => unreachable!("parser requires an initializer"),
+                };
+                self.zero_fill(addr, size);
+                self.scopes.last_mut().unwrap().extend(syms);
+            }
+            Stmt::Match { pos, .. } => {
                 return self.err(*pos, "not implemented yet");
             }
             Stmt::Expr(e) => {
@@ -1372,6 +1428,53 @@ impl Codegen {
             }
         }
         Ok(())
+    }
+
+    /// `arr[idx] = value` for u16 arrays (low table at `addr`, high table at `addr + len`).
+    fn store_u16_elem(&mut self, addr: u16, len: u16, idx: &Expr, value: &Expr) -> R<()> {
+        if let Some(i) = self.const_val(idx) {
+            if i < 0 || i >= len as i64 {
+                return self.err(idx.pos, format!("index {i} is out of bounds (length {len})"));
+            }
+            self.expr(value, Type::U16)?;
+            self.store(addr + i as u16, Type::U8);
+            self.e.abs(STX, addr + len + i as u16);
+            return Ok(());
+        }
+        self.expr(value, Type::U16)?;
+        self.e.imp(PHA);
+        self.e.imp(TXA);
+        self.e.imp(PHA);
+        self.index_to_x(idx)?;
+        self.e.imp(TXA);
+        self.e.imp(TAY);
+        self.e.imp(PLA);
+        self.e.ins(STA, Operand::abs_y(addr + len));
+        self.e.imp(PLA);
+        self.e.ins(STA, Operand::abs_y(addr));
+        Ok(())
+    }
+
+    /// Emits code clearing `size` bytes at `addr`.
+    fn zero_fill(&mut self, addr: u16, size: u16) {
+        self.e.imm(LDA, 0);
+        if size <= 4 {
+            for i in 0..size {
+                self.e.abs(STA, addr + i);
+            }
+            return;
+        }
+        let mut off = 0;
+        while off < size {
+            let n = (size - off).min(255);
+            let top = self.e.new_label();
+            self.e.imm(LDX, n as u8);
+            self.e.label(&top);
+            self.e.ins(STA, Operand::abs_x(addr + off - 1));
+            self.e.imp(DEX);
+            self.e.br(BNE, &top);
+            off += n;
+        }
     }
 
     fn compound(&self, target: Expr, op: Option<BinOp>, value: &Expr) -> Expr {

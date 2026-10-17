@@ -26,8 +26,8 @@ pub(crate) enum Sym {
     Struct(String),
     /// Marker for struct arrays; field access routes to Array("name.field", ...).
     StructArray(String),
-    /// A 32x30 background screen in ROM.
-    Map { label: String },
+    /// A background map in ROM (column-major tiles at `label`, attributes at `label_a`).
+    Map { label: String, width: u8 },
     /// A metasprite table in ROM: `[count, (dx, dy, tile, attr)...]`.
     Metasprite { label: String },
 }
@@ -50,6 +50,7 @@ pub struct Codegen {
     pub vars: BTreeMap<String, VarInfo>,
     funcs: HashMap<String, FnSig>,
     structs: HashMap<String, Vec<(String, Type)>>,
+    zones: HashMap<String, (Vec<(String, Pos)>, Pos)>,
     scopes: Vec<HashMap<String, Sym>>,
     /// (continue label, break label) for each enclosing loop.
     loops: Vec<(String, String)>,
@@ -120,6 +121,7 @@ impl Codegen {
             vars: BTreeMap::new(),
             funcs: HashMap::new(),
             structs: HashMap::new(),
+            zones: HashMap::new(),
             scopes: Vec::new(),
             loops: Vec::new(),
             cur_ret: None,
@@ -151,15 +153,30 @@ impl Codegen {
             }
         }
         for d in &prog.items {
+            if let Decl::PaletteZone { name, rows, pos } = d {
+                if self.zones.insert(name.clone(), (rows.clone(), *pos)).is_some() {
+                    self.errors.push(Diagnostic::new(*pos, format!("`{name}` already has a palette_zone")));
+                }
+            }
+        }
+        for d in &prog.items {
             if let Err(e) = self.declare(d) {
                 // Keep the name defined so later uses do not cascade into
                 // misleading "unknown" errors.
                 if let Decl::Map { name, .. } = d {
-                    self.globals.entry(name.clone()).or_insert(Sym::Map { label: "__bad_map".into() });
+                    self.globals.entry(name.clone()).or_insert(Sym::Map { label: "__bad_map".into(), width: 32 });
                 }
                 self.errors.push(e);
             }
         }
+        let mut orphans: Vec<_> = self
+            .zones
+            .iter()
+            .filter(|(n, _)| !matches!(self.globals.get(*n), Some(Sym::Map { .. })))
+            .map(|(n, (_, pos))| Diagnostic::new(*pos, format!("palette_zone `{n}` does not name a map")))
+            .collect();
+        orphans.sort_by_key(|d| (d.line, d.col));
+        self.errors.extend(orphans);
         match self.funcs.get("main") {
             None => self.errors.push(Diagnostic::new(Pos { line: 1, col: 1 }, "missing entry point `fn main()`")),
             Some(sig) if !sig.params.is_empty() || sig.ret.is_some() => {
@@ -284,6 +301,44 @@ impl Codegen {
         Ok((syms, start.unwrap(), total))
     }
 
+    /// Attribute bytes for a map, column-group-major: group g (4 tile columns), block row r
+    /// at `g * 8 + r`. Each byte packs the palettes of four 16x16 areas.
+    fn palette_zone_attrs(&self, map: &str, width: usize) -> R<Vec<u8>> {
+        let groups = width.div_ceil(4);
+        let mut zone = vec![[0u8; 128]; 16];
+        if let Some((rows, pos)) = self.zones.get(map) {
+            if rows.len() > 15 {
+                return self.err(rows[15].1, format!("a palette_zone has at most 15 rows, found {}", rows.len()));
+            }
+            let max_cols = width.div_ceil(2);
+            for (zr, (row, rpos)) in rows.iter().enumerate() {
+                if row.chars().count() > max_cols {
+                    return self.err(*rpos, format!("palette_zone row {} is wider than the map ({max_cols} areas)", zr + 1));
+                }
+                for (zc, ch) in row.chars().enumerate() {
+                    zone[zr][zc] = match ch {
+                        '.' | '0' => 0,
+                        '1' => 1,
+                        '2' => 2,
+                        '3' => 3,
+                        other => {
+                            return self.err(*rpos, format!("invalid palette `{other}` in palette_zone row {} (use 0-3)", zr + 1))
+                        }
+                    };
+                }
+            }
+            let _ = pos;
+        }
+        let mut out = Vec::with_capacity(groups * 8);
+        for g in 0..groups {
+            for r in 0..8 {
+                let (zr, zc) = (r * 2, g * 2);
+                out.push(zone[zr][zc] | zone[zr][zc + 1] << 2 | zone[zr + 1][zc] << 4 | zone[zr + 1][zc + 1] << 6);
+            }
+        }
+        Ok(out)
+    }
+
     fn const_expr(&self, e: &Expr, what: &str) -> R<i64> {
         self.const_val(e).ok_or_else(|| Diagnostic::new(e.pos, format!("{what} must be a constant expression")))
     }
@@ -358,23 +413,29 @@ impl Codegen {
                 if rows.len() > 30 {
                     return self.err(rows[30].1, format!("a map has at most 30 rows, found {}", rows.len()));
                 }
-                let mut bytes = vec![b' '; 960];
                 for (y, (row, rpos)) in rows.iter().enumerate() {
                     if !row.is_ascii() {
                         return self.err(*rpos, "map rows may only contain ASCII characters");
                     }
-                    if row.len() > 32 {
-                        return self.err(*rpos, format!("map row {} has {} columns; the limit is 32", y + 1, row.len()));
-                    }
-                    for (x, c) in row.bytes().enumerate() {
-                        bytes[y * 32 + x] = if c == b'.' { b' ' } else { c };
+                    if row.len() > 255 {
+                        return self.err(*rpos, format!("map row {} has {} columns; the limit is 255", y + 1, row.len()));
                     }
                 }
+                let width = rows.iter().map(|(r, _)| r.len()).max().unwrap_or(0).max(32);
+                // Column-major: column c, row r at c * 30 + r, so a column is one vertical write.
+                let mut tiles = vec![b' '; width * 30];
+                for (y, (row, _)) in rows.iter().enumerate() {
+                    for (x, c) in row.bytes().enumerate() {
+                        tiles[x * 30 + y] = if c == b'.' { b' ' } else { c };
+                    }
+                }
+                let attrs = self.palette_zone_attrs(name, width)?;
                 let label = format!("m_{name}");
-                self.globals.insert(name.clone(), Sym::Map { label: label.clone() });
-                self.data.push((label, bytes));
+                self.globals.insert(name.clone(), Sym::Map { label: label.clone(), width: width as u8 });
+                self.data.push((format!("{label}_a"), attrs));
+                self.data.push((label, tiles));
             }
-            Decl::PaletteZone { pos, .. } => return self.err(*pos, "not implemented yet"),
+            Decl::PaletteZone { .. } => {}
             Decl::Metasprite { name, parts, pos } => {
                 self.define(name, *pos)?;
                 if parts.is_empty() || parts.len() > 63 {

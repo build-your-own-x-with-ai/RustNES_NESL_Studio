@@ -43,7 +43,27 @@ pub const SFX_MAXVOL: u16 = 0x0368;
 pub const SFX_DUTY: u16 = 0x0369;
 /// Shadow of $4015 (bit 0 = play_tone's pulse 1, bit 1 = pulse 2, bit 3 = noise).
 pub const APU_EN: u16 = 0x036A;
-pub const USER_RAM_START: u16 = 0x0370;
+// Camera / streaming state for wide maps.
+pub const CAM_X: u16 = 0x036B; // 2 bytes, world x of the left screen edge
+pub const CAM_COL: u16 = 0x036D;
+pub const MAP_T: u16 = 0x036E; // 2 bytes, tile columns of the followed map
+pub const MAP_A: u16 = 0x0370; // 2 bytes, attribute groups of the followed map
+pub const MAP_W: u16 = 0x0372;
+pub const SC_COL: u16 = 0x0373;
+pub const SC_G: u16 = 0x0374;
+pub const SC_R: u16 = 0x0375;
+/// PPUCTRL / scroll x last applied by the NMI; reused while the main program is
+/// mid-update (VQ_LOCK set) so the two halves of a scroll change never tear.
+pub const LAST_CTRL: u16 = 0x0376;
+pub const LAST_SX: u16 = 0x0377;
+// Scratch for map address arithmetic.
+pub const CA_LO: u16 = 0x0378;
+pub const CA_HI: u16 = 0x0379;
+pub const SUB_LO: u16 = 0x037A;
+pub const SUB_HI: u16 = 0x037B;
+pub const NGROUPS: u16 = 0x037C;
+pub const AG: u16 = 0x037D;
+pub const USER_RAM_START: u16 = 0x0380;
 pub const USER_RAM_END: u16 = 0x0800;
 
 pub const PPUCTRL: u16 = 0x2000;
@@ -137,6 +157,7 @@ pub fn emit_core(e: &mut Emitter) {
     e.abs(STA, RNG);
     e.imm(LDA, 0x80); // NMI on, both pattern tables at $0000
     e.abs(STA, CTRL_SHADOW);
+    e.abs(STA, LAST_CTRL);
     e.abs(STA, PPUCTRL);
     e.jsr("__init_globals");
     e.jsr("f_main");
@@ -164,9 +185,16 @@ pub fn emit_core(e: &mut Emitter) {
     e.abs(STA, OAMADDR);
     e.imm(LDA, (OAM_SHADOW >> 8) as u8);
     e.abs(STA, OAMDMA);
+    e.abs(LDA, VQ_LOCK);
+    e.br(BNE, "__nmi_last_scroll");
     e.abs(LDA, CTRL_SHADOW);
-    e.abs(STA, PPUCTRL);
+    e.abs(STA, LAST_CTRL);
     e.abs(LDA, SCROLL_X);
+    e.abs(STA, LAST_SX);
+    e.label("__nmi_last_scroll");
+    e.abs(LDA, LAST_CTRL);
+    e.abs(STA, PPUCTRL);
+    e.abs(LDA, LAST_SX);
     e.abs(STA, PPUSCROLL);
     e.abs(LDA, SCROLL_Y);
     e.abs(STA, PPUSCROLL);

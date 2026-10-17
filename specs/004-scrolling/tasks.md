@@ -18,8 +18,8 @@ description: "Task list for horizontal scrolling"
 
 ## Phase 3: US1 宽地图 (P1) 🎯 MVP
 
-- [ ] T403 [US1] 测试：64/128 列 draw_map 写两个命名表、map_tile u16 列号与越界、255 列上限、003 回归 `crates/nesl/tests/scrolling.rs`
-- [ ] T404 [US1] 实现：列存储、纵向队列条目、`__col_addr`、新 `__draw_map` / `__map_tile`
+- [x] T403 [US1] 测试：64/128 列 draw_map 写两个命名表、map_tile u16 列号与越界、255 列上限、003 回归 `crates/nesl/tests/scrolling.rs`
+- [x] T404 [US1] 实现：列存储、纵向队列条目、`__col_addr`、新 `__draw_map` / `__map_tile`
 
 ## Phase 4: US2 镜头 (P1)
 

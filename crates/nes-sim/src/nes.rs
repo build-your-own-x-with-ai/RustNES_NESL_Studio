@@ -100,7 +100,7 @@ impl NesBus {
         self.ppu_addr
     }
 
-    fn vram_index(addr: u16) -> usize {
+    pub(crate) fn vram_index(addr: u16) -> usize {
         let mut a = addr & 0x3FFF;
         if a >= 0x3F00 {
             a = 0x3F00 | (a & 0x1F);

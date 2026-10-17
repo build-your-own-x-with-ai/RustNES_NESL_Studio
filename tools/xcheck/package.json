@@ -1,0 +1,8 @@
+{
+  "name": "nesl-xcheck",
+  "private": true,
+  "description": "Runs NESL-built ROMs in jsnes (an independent emulator) to cross-check the test machine",
+  "dependencies": {
+    "jsnes": "1.2.1"
+  }
+}

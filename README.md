@@ -90,3 +90,5 @@ specs/00x-…      Spec Kit 文档：spec.md（需求）plan.md（计划）tasks
 - **TDD**：git 历史中每个模块都是先提交失败的测试（`test:`），再提交实现（`feat:`）。
   编译器测试会把源码编译成 ROM，在 `nes-sim` 中真正执行，再断言 RAM / VRAM / OAM / APU 状态。
 - `cargo test --workspace` 运行全部测试；`cargo clippy --workspace --all-targets` 保持零警告。
+- **交叉验证**：`cd tools/xcheck && npm ci` 后，`cargo test` 会把示例 ROM 同时放进测试机和 jsnes（另一个独立模拟器）运行，
+  逐像素比较最后一帧，截图写到 `target/xcheck/`。没有 Node 或没装依赖时这些测试自动跳过。

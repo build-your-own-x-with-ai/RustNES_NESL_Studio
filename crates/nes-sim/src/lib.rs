@@ -5,6 +5,7 @@
 
 pub mod cpu;
 pub mod nes;
+pub mod render;
 
 pub use cpu::{Bus, Cpu, CpuError};
 pub use nes::{NesBus, TestNes};

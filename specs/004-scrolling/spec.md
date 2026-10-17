@@ -97,7 +97,7 @@
 ## Success Criteria *(mandatory)*
 
 - **SC-401**: 4 屏宽地图往返卷轴全程，测试机渲染期显存写入为 0，可见列 100% 正确。
-- **SC-402**: 横版跳跃示例逻辑代码 ≤ 150 行（不含地图行与像素图）。
+- **SC-402**: 横版跳跃示例逻辑代码 ≤ 150 行（不含地图行与像素图）。实测 `examples/runner.nesl` 为 67 行。
 - **SC-403**: `cargo test --workspace` 全绿。
 
 ## Assumptions

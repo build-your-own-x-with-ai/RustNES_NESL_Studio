@@ -134,7 +134,7 @@ fn camera_keeps_hero_near_120_and_moves_at_most_8_pixels_a_frame() {
         prev = cam;
     }
     assert_eq!(prev, 600 - 120);
-    assert_eq!(hardware_scroll(&r), 480 % 512);
+    assert_eq!(hardware_scroll(&r), 480, "scroll x 224 in the second nametable");
     assert_eq!(r.nes.bus.render_conflicts, 0);
 }
 

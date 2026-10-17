@@ -33,6 +33,6 @@ description: "Task list for horizontal scrolling"
 
 ## Phase 6: US4 示例与收尾 (P2)
 
-- [ ] T409 示例 `examples/runner.nesl` + 端到端测试；编辑器示例与高亮
-- [ ] T410 README / 语言参考；clippy 清零
-- [ ] T411 合并到 `main`
+- [x] T409 示例 `examples/runner.nesl` + 端到端测试；编辑器示例与高亮
+- [x] T410 README / 语言参考；clippy 清零
+- [x] T411 合并到 `main`

@@ -19,7 +19,7 @@ pub const CONSTANTS: &[(&str, u32)] = &[
 
 /// Built-in sound effects, 8 bytes each:
 /// `[channel (0 = pulse 2, 1 = noise), period lo, period hi, delta (i8), frames, max volume, duty bits, pad]`.
-const SFX_TABLE: [[u8; 8]; 5] = [
+pub(crate) const SFX_TABLE: [[u8; 8]; 5] = [
     [0, 0xC8, 0x00, 0xFA, 16, 12, 0xB0, 0], // JUMP: rising sweep
     [0, 0x50, 0x00, 0x00, 12, 10, 0x70, 0], // COIN: bright blip
     [0, 0x30, 0x00, 0x08, 8, 12, 0x30, 0],  // SHOOT: short falling zap
@@ -1107,8 +1107,8 @@ pub fn emit_runtime(e: &mut Emitter) {
     // A = effect id (masked to the table). The timer is cleared first and set last so an
     // NMI arriving mid-setup never ticks a half-written effect.
     e.label("__sfx");
-    e.imm(AND, 0x07);
-    e.imm(CMP, SFX_TABLE.len() as u8);
+    e.imm(AND, 0x1F);
+    e.ins(CMP, Operand::Abs(crate::asm::Val::Label("__sfx_count".into(), 0)));
     e.br(BCS, "__sfx_done");
     e.acc(ASL);
     e.acc(ASL);
@@ -1183,8 +1183,6 @@ pub fn emit_runtime(e: &mut Emitter) {
 
     emit_music(e);
 
-    e.label("__sfx_table");
-    e.items.push(crate::asm::Item::Bytes(SFX_TABLE.concat()));
 }
 
 /// The NMI-driven music engine: one generated routine per voice (absolute addressing).

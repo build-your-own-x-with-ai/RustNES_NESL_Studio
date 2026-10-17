@@ -53,6 +53,8 @@ pub struct Codegen {
     funcs: HashMap<String, FnSig>,
     structs: HashMap<String, Vec<(String, Type)>>,
     zones: HashMap<String, (Vec<(String, Pos)>, Pos)>,
+    /// User `sound` effects, appended to the built-in table (ids 5, 6, ...).
+    sounds: Vec<[u8; 8]>,
     scopes: Vec<HashMap<String, Sym>>,
     /// (continue label, break label) for each enclosing loop.
     loops: Vec<(String, String)>,
@@ -124,6 +126,7 @@ impl Codegen {
             funcs: HashMap::new(),
             structs: HashMap::new(),
             zones: HashMap::new(),
+            sounds: Vec::new(),
             scopes: Vec::new(),
             loops: Vec::new(),
             cur_ret: None,
@@ -211,6 +214,14 @@ impl Codegen {
                 self.function(f);
             }
         }
+
+        self.e.comment("---- sound effect table ----");
+        let mut table: Vec<[u8; 8]> = builtins::SFX_TABLE.to_vec();
+        table.extend(std::mem::take(&mut self.sounds));
+        self.e.label("__sfx_count");
+        self.e.items.push(crate::asm::Item::Bytes(vec![table.len() as u8]));
+        self.e.label("__sfx_table");
+        self.e.items.push(crate::asm::Item::Bytes(table.concat()));
 
         self.e.comment("---- read-only data ----");
         for (label, bytes) in std::mem::take(&mut self.data) {
@@ -448,7 +459,44 @@ impl Codegen {
                 self.globals.insert(name.clone(), Sym::Music { label: label.clone(), lowest: song.lowest });
                 self.data.push((label, song.events));
             }
-            Decl::Sound { pos, .. } => return self.err(*pos, "not implemented yet"),
+            Decl::Sound { name, channel, args, pos } => {
+                self.define(name, *pos)?;
+                let noise = match channel.0.as_str() {
+                    "pulse" => false,
+                    "noise" => true,
+                    other => return self.err(channel.1, format!("unknown sound channel `{other}` (use `pulse` or `noise`)")),
+                };
+                let id = builtins::SFX_TABLE.len() + self.sounds.len();
+                if id >= 32 {
+                    return self.err(*pos, "at most 32 sound effects (5 built-in + 27 custom)");
+                }
+                let num = |cg: &Self, i: usize, what: &str, lo: i64, hi: i64, default: i64| -> R<i64> {
+                    let Some(e) = args.get(i) else { return Ok(default) };
+                    let v = cg.const_expr(e, &format!("sound {what}"))?;
+                    if !(lo..=hi).contains(&v) {
+                        return cg.err(e.pos, format!("sound {what} {v} is out of range ({lo}..={hi})"));
+                    }
+                    Ok(v)
+                };
+                let (plo, phi) = if noise { (0, 15) } else { (8, 2047) };
+                let period = num(self, 0, "period", plo, phi, 0)?;
+                let delta = num(self, 1, "delta", -128, 127, 0)?;
+                let frames = num(self, 2, "frames", 1, 255, 1)?;
+                let volume = num(self, 3, "volume", 0, 15, 12)?;
+                let duty = num(self, 4, "duty", 0, 3, 2)?;
+                // same layout as the built-in table: [ch, lo, hi, delta, frames, maxvol, ctrl, pad]
+                self.sounds.push([
+                    noise as u8,
+                    period as u8,
+                    (period >> 8) as u8,
+                    delta as u8,
+                    frames as u8,
+                    volume as u8,
+                    (duty as u8) << 6 | 0x30,
+                    0,
+                ]);
+                self.globals.insert(name.clone(), Sym::Const(id as i64));
+            }
             Decl::Metasprite { name, parts, pos } => {
                 self.define(name, *pos)?;
                 if parts.is_empty() || parts.len() > 63 {

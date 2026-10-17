@@ -31,12 +31,12 @@ description: "Task list for music and custom sound effects"
 ## Phase 5: US3 自定义音效 (P2)
 
 - [ ] T509 [US3] 测试：sound 声明写寄存器、噪声、参数错误
-- [ ] T510 [US3] 实现：音效表移入代码生成、`sound` 常量
+- [x] T510 [US3] 实现：音效表移入代码生成、`sound` 常量
 
 ## Phase 6: US4 共存 (P2)
 
-- [ ] T511 [US4] 测试：音效期间和声让出、之后恢复、stop_sound 停止音乐
-- [ ] T512 [US4] 实现（若 T508 未覆盖）
+- [x] T511 [US4] 测试：音效期间和声让出、之后恢复、stop_sound 停止音乐
+- [x] T512 [US4] 实现（若 T508 未覆盖）
 
 ## Phase 7: Polish
 

@@ -29,7 +29,7 @@ fn writes(per: &Frames, reg: u16) -> Vec<(usize, u8)> {
 /// the channel, so the note's own write is the last one in that frame).
 fn first_note_ctrl(per: &Frames, ctrl: u16, period_lo: u16) -> u8 {
     let f = writes(per, period_lo)[0].0;
-    writes(per, ctrl).into_iter().filter(|(g, _)| *g == f).last().unwrap().1
+    writes(per, ctrl).into_iter().filter(|(g, _)| *g == f).next_back().unwrap().1
 }
 
 fn song(music: &str, play: &str) -> String {

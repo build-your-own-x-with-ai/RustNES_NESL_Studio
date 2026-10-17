@@ -50,7 +50,7 @@ pub fn signature(name: &str) -> Option<Signature> {
         "vram_put" | "hide_sprite" => sig!(U8 => None),
         "vram_fill" => sig!(U8, U16 => None),
         "print" => sig!(U8, U8, Text => None),
-        "print_u8" => sig!(U8, U8, U8 => None),
+        "print_u8" | "set_tile" => sig!(U8, U8, U8 => None),
         "sprite" => sig!(U8, U8, U8, U8, U8 => None),
         "joypad" => sig!(U8 => U8),
         "scroll" => sig!(U8, U8 => None),
@@ -162,9 +162,9 @@ impl Codegen {
                 self.e.abs(STA, ARG2);
                 self.e.jsr("__print");
             }
-            "print_u8" => {
+            "print_u8" | "set_tile" => {
                 self.slots(&[(&args[0], Type::U8, ARG0), (&args[1], Type::U8, ARG1), (&args[2], Type::U8, ARG3)])?;
-                self.e.jsr("__print_u8");
+                self.e.jsr(if name == "print_u8" { "__print_u8" } else { "__set_tile" });
             }
             "vram_fill" => {
                 self.slots(&[(&args[0], Type::U8, ARG0), (&args[1], Type::U16, ARG1)])?;
@@ -270,7 +270,7 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.imm(LDA, 0);
     e.abs(STA, MASK_SHADOW);
     e.abs(STA, PPUMASK);
-    e.imp(RTS);
+    e.jmp("__vq_flush"); // rendering is off now, so pending writes can go straight in
 
     // Rewrites PPUCTRL/PPUSCROLL from the shadows. After $2006 writes this only changes the
     // PPU's temporary address, so pending $2007 writes still land where intended.
@@ -293,19 +293,11 @@ pub fn emit_runtime(e: &mut Emitter) {
 
     // PTR = source, ARG2 = length
     e.label("__load_palette");
-    e.abs(BIT, PPUSTATUS);
-    e.imm(LDA, 0x3F);
-    e.abs(STA, PPUADDR);
     e.imm(LDA, 0x00);
-    e.abs(STA, PPUADDR);
-    e.imm(LDY, 0);
-    e.label("__load_palette_loop");
-    e.ins(LDA, Operand::IndY(PTR as u8));
-    e.abs(STA, PPUDATA);
-    e.imp(INY);
-    e.abs(CPY, ARG2);
-    e.br(BNE, "__load_palette_loop");
-    e.jmp("__fix_scroll");
+    e.abs(STA, TMP0);
+    e.imm(LDA, 0x3F);
+    e.abs(STA, TMP1);
+    e.jmp("__vram_write");
 
     // ARG0 = x, ARG1 = y, PTR = text, ARG2 = length
     e.label("__print");
@@ -314,27 +306,125 @@ pub fn emit_runtime(e: &mut Emitter) {
         e.acc(LSR);
     }
     e.imm(ORA, 0x20);
-    e.imp(TAX);
+    e.abs(STA, TMP1);
     e.abs(LDA, ARG1);
     for _ in 0..5 {
         e.acc(ASL);
     }
     e.imp(CLC);
     e.abs(ADC, ARG0);
-    e.br(BCC, "__print_nc");
-    e.imp(INX);
-    e.label("__print_nc");
+    e.abs(STA, TMP0);
+    e.br(BCC, "__vram_write");
+    e.abs(INC, TMP1);
+    // fall through
+
+    // TMP1:TMP0 = VRAM address, PTR = source, ARG2 = length (1-255).
+    // Writes directly when rendering is off, otherwise queues 32-byte chunks for the NMI.
+    e.label("__vram_write");
+    e.abs(LDA, MASK_SHADOW);
+    e.imm(AND, 0x18);
+    e.br(BNE, "__vw_queue");
     e.abs(BIT, PPUSTATUS);
-    e.abs(STX, PPUADDR);
+    e.abs(LDA, TMP1);
+    e.abs(STA, PPUADDR);
+    e.abs(LDA, TMP0);
     e.abs(STA, PPUADDR);
     e.imm(LDY, 0);
-    e.label("__print_loop");
+    e.label("__vw_loop");
     e.ins(LDA, Operand::IndY(PTR as u8));
     e.abs(STA, PPUDATA);
     e.imp(INY);
     e.abs(CPY, ARG2);
-    e.br(BNE, "__print_loop");
+    e.br(BNE, "__vw_loop");
     e.jmp("__fix_scroll");
+    e.label("__vw_queue");
+    e.abs(LDA, ARG2);
+    e.imm(CMP, 33);
+    e.br(BCC, "__vw_last");
+    e.imm(LDA, 32);
+    e.abs(STA, TMP2);
+    e.jsr("__vq_push");
+    e.abs(LDA, ARG2);
+    e.imp(SEC);
+    e.imm(SBC, 32);
+    e.abs(STA, ARG2);
+    for (lo, hi) in [(PTR, PTR + 1), (TMP0, TMP1)] {
+        let skip = e.new_label();
+        e.abs(LDA, lo);
+        e.imp(CLC);
+        e.imm(ADC, 32);
+        e.abs(STA, lo);
+        e.br(BCC, &skip);
+        e.abs(INC, hi);
+        e.label(&skip);
+    }
+    e.jmp("__vw_queue");
+    e.label("__vw_last");
+    e.abs(STA, TMP2);
+    // fall through
+
+    // Appends [TMP1, TMP0, TMP2, PTR[0..TMP2]] to the queue, waiting for a flush when full.
+    e.label("__vq_push");
+    e.abs(LDA, VQ_LEN);
+    e.imp(SEC); // +1 for the header, +2 more below
+    e.abs(ADC, TMP2);
+    e.imm(ADC, 2);
+    e.imm(CMP, VQ_SIZE + 1);
+    e.br(BCC, "__vq_fits");
+    e.jsr("__wait_vblank");
+    e.jmp("__vq_push");
+    e.label("__vq_fits");
+    e.abs(INC, VQ_LOCK);
+    e.abs(LDX, VQ_LEN);
+    for src in [TMP1, TMP0, TMP2] {
+        e.abs(LDA, src);
+        e.ins(STA, Operand::abs_x(VQ));
+        e.imp(INX);
+    }
+    e.imm(LDY, 0);
+    e.label("__vq_copy");
+    e.ins(LDA, Operand::IndY(PTR as u8));
+    e.ins(STA, Operand::abs_x(VQ));
+    e.imp(INX);
+    e.imp(INY);
+    e.abs(CPY, TMP2);
+    e.br(BNE, "__vq_copy");
+    e.abs(STX, VQ_LEN); // commit: NMI only ever sees whole entries
+    e.abs(DEC, VQ_LOCK);
+    e.imp(RTS);
+
+    // Writes every queued entry to the PPU and empties the queue. Uses A, X, Y only.
+    e.label("__vq_flush");
+    e.imm(LDX, 0);
+    e.label("__vqf_entry");
+    e.abs(CPX, VQ_LEN);
+    e.br(BCS, "__vqf_done");
+    e.abs(BIT, PPUSTATUS);
+    for _ in 0..2 {
+        e.ins(LDA, Operand::abs_x(VQ));
+        e.abs(STA, PPUADDR);
+        e.imp(INX);
+    }
+    e.ins(LDY, Operand::abs_x(VQ));
+    e.imp(INX);
+    e.label("__vqf_byte");
+    e.ins(LDA, Operand::abs_x(VQ));
+    e.abs(STA, PPUDATA);
+    e.imp(INX);
+    e.imp(DEY);
+    e.br(BNE, "__vqf_byte");
+    e.jmp("__vqf_entry");
+    e.label("__vqf_done");
+    e.imm(LDA, 0);
+    e.abs(STA, VQ_LEN);
+    e.imp(RTS);
+
+    // ARG0 = x, ARG1 = y, ARG3 = tile
+    e.label("__set_tile");
+    e.abs(LDA, ARG3);
+    e.abs(STA, PRINT_BUF);
+    e.imm(LDA, 1);
+    e.jmp("__print_buf");
 
     // ARG0 = x, ARG1 = y, ARG3 = value
     e.label("__print_u8");
@@ -351,12 +441,13 @@ pub fn emit_runtime(e: &mut Emitter) {
     }
     e.imm(ORA, b'0');
     e.abs(STA, PRINT_BUF + 2);
+    e.imm(LDA, 3);
+    e.label("__print_buf"); // A = length of PRINT_BUF to print at (ARG0, ARG1)
+    e.abs(STA, ARG2);
     e.imm(LDA, PRINT_BUF as u8);
     e.abs(STA, PTR);
     e.imm(LDA, (PRINT_BUF >> 8) as u8);
     e.abs(STA, PTR + 1);
-    e.imm(LDA, 3);
-    e.abs(STA, ARG2);
     e.jmp("__print");
 
     // ARG0 = value, ARG1:ARG2 = count

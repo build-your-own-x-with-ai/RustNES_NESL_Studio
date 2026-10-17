@@ -24,10 +24,17 @@ pub const ARG1: u16 = 0x11;
 pub const ARG2: u16 = 0x12;
 pub const ARG3: u16 = 0x13;
 pub const ARG4: u16 = 0x14;
+/// Committed length of the VRAM update queue.
+pub const VQ_LEN: u16 = 0x15;
 pub const USER_ZP_START: u16 = 0x16;
 pub const OAM_SHADOW: u16 = 0x0200;
-pub const PRINT_BUF: u16 = 0x0300; // 3 bytes used by print_u8
-pub const USER_RAM_START: u16 = 0x0310;
+/// VRAM update queue: entries of `[addr_hi, addr_lo, len, bytes...]`, flushed by NMI.
+pub const VQ: u16 = 0x0300;
+pub const VQ_SIZE: u8 = 96;
+pub const PRINT_BUF: u16 = 0x0360; // 3 bytes used by print_u8 / set_tile
+/// Non-zero while the main program is appending to the queue; NMI then skips the flush.
+pub const VQ_LOCK: u16 = 0x0363;
+pub const USER_RAM_START: u16 = 0x0370;
 pub const USER_RAM_END: u16 = 0x0800;
 
 pub const PPUCTRL: u16 = 0x2000;
@@ -139,6 +146,11 @@ pub fn emit_core(e: &mut Emitter) {
     e.abs(LDA, MASK_SHADOW);
     e.imm(AND, 0x18);
     e.br(BEQ, "__nmi_skip");
+    // VRAM writes first: they must finish inside vblank.
+    e.abs(LDA, VQ_LOCK);
+    e.br(BNE, "__nmi_no_flush");
+    e.jsr("__vq_flush");
+    e.label("__nmi_no_flush");
     e.imm(LDA, 0);
     e.abs(STA, OAMADDR);
     e.imm(LDA, (OAM_SHADOW >> 8) as u8);

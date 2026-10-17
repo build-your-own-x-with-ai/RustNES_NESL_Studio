@@ -19,8 +19,8 @@ description: "Task list for game development API"
 
 ## Phase 3: US1 VRAM 队列 (P1) 🎯 MVP
 
-- [ ] T304 [US1] 测试：渲染中 print/set_tile/load_palette 无违规写入、溢出等待、ppu_off 刷新；001 示例在测试机中零违规 `crates/nesl/tests/game_api.rs`
-- [ ] T305 [US1] 实现：内存布局调整、`__vq_push/__vq_flush`、NMI 刷新、print 分块、set_tile `crates/nesl/src/{runtime,builtins}.rs`
+- [x] T304 [US1] 测试：渲染中 print/set_tile/load_palette 无违规写入、溢出等待、ppu_off 刷新；001 示例在测试机中零违规 `crates/nesl/tests/game_api.rs`
+- [x] T305 [US1] 实现：内存布局调整、`__vq_push/__vq_flush`、NMI 刷新、print 分块、set_tile `crates/nesl/src/{runtime,builtins}.rs`
 
 ## Phase 4: US2 map (P2)
 

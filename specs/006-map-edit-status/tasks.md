@@ -15,12 +15,12 @@ description: "Task list for editable maps and the status bar"
 ## Phase 2: Foundational
 
 - [x] T602 测试 + 实现：测试机 sprite-0 碰撞与 `$2000/$2005` 写入日志 `crates/nes-sim`
-- [ ] T603 共享测试辅助函数（宽地图、命名表读取）移到 `crates/nesl/tests/common/mod.rs`
+- [x] T603 共享测试辅助函数（宽地图、命名表读取）移到 `crates/nesl/tests/common/mod.rs`
 
 ## Phase 3: US1 改写地图 (P1) 🎯 MVP
 
-- [ ] T604 [US1] 测试：读回、可见格更新、卷轴往返保持、屏幕外补画、多地图隔离、reset_map、容量与返回值、不用时不占 RAM `crates/nesl/tests/map_edit.rs`
-- [ ] T605 [US1] 实现：覆盖表、`__ov_find`、`__map_tile`、`__stream_col` 缓冲、`__set_map_tile`、`__reset_map`、预扫描保留 RAM
+- [x] T604 [US1] 测试：读回、可见格更新、卷轴往返保持、屏幕外补画、多地图隔离、reset_map、容量与返回值、不用时不占 RAM `crates/nesl/tests/map_edit.rs`
+- [x] T605 [US1] 实现：覆盖表、`__ov_find`、`__map_tile`、`__stream_col` 缓冲、`__set_map_tile`、`__reset_map`、预扫描保留 RAM
 
 ## Phase 4: US2 状态栏 (P2)
 

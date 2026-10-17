@@ -54,7 +54,13 @@ fn maze_hero_walks_collects_coins_and_never_glitches() {
     let out = build(&example("maze"));
     let mut nes = TestNes::from_ines(&out.rom).unwrap();
     let v = |nes: &TestNes, n: &str| nes.peek(out.vars[n].addr);
-    nes.run_frames(10).unwrap();
+    // Start-up scans all 960 map cells for coins; wait for it instead of guessing a frame count.
+    let mut waited = 0;
+    while v(&nes, "left") == 0 {
+        nes.run_frames(1).unwrap();
+        waited += 1;
+        assert!(waited < 60, "coin scan never finished");
+    }
     assert_eq!(&nes.bus.vram[0x2000 + 3 * 32..][..32], &[b'#'; 32], "map drawn");
     assert_eq!(v(&nes, "left"), v(&nes, "ncoins"));
     assert!(v(&nes, "ncoins") >= 10);

@@ -81,6 +81,8 @@ pub fn signature(name: &str) -> Option<Signature> {
         "draw_map" => sig!(Map => None),
         "map_tile" => sig!(Map, U16, U8 => U8),
         "camera_follow" => sig!(U16, Map => None),
+        "set_map_tile" => sig!(Map, U8, U8, U8 => U8),
+        "reset_map" => sig!(Map => None),
         "camera_x" => sig!(=> Some(Type::U16)),
         "metasprite" => sig!(U8, U8, U8, Meta => U8),
         "collide" => sig!(U8, U8, U8, U8, U8, U8, U8, U8 => U8),
@@ -224,23 +226,40 @@ impl Codegen {
                 self.e.abs(LDX, CAM_X + 1);
             }
             "camera_follow" => {
-                let (label, width) = self.map_label(&args[1])?;
+                let (label, width, id) = self.map_label(&args[1])?;
                 self.slots(&[(&args[0], Type::U16, ARG0)])?;
-                self.map_pointers(&label, width);
+                self.map_pointers(&label, width, id);
                 self.e.jsr("__camera_follow");
             }
             "draw_map" => {
-                let (label, width) = self.map_label(&args[0])?;
-                self.map_pointers(&label, width);
+                let (label, width, id) = self.map_label(&args[0])?;
+                self.map_pointers(&label, width, id);
                 self.e.jsr("__draw_map");
             }
             "map_tile" => {
-                let (label, width) = self.map_label(&args[0])?;
+                let (label, width, id) = self.map_label(&args[0])?;
                 self.slots(&[(&args[1], Type::U16, ARG0), (&args[2], Type::U8, ARG2)])?;
                 self.e.imm(LDA, width);
                 self.e.abs(STA, ARG3);
+                self.e.imm(LDA, id);
+                self.e.abs(STA, ARG4);
                 self.pointer(&label);
                 self.e.jsr("__map_tile");
+            }
+            "set_map_tile" => {
+                let (_, width, id) = self.map_label(&args[0])?;
+                self.slots(&[(&args[1], Type::U8, ARG0), (&args[2], Type::U8, ARG2), (&args[3], Type::U8, ARG3)])?;
+                self.e.imm(LDA, width);
+                self.e.abs(STA, ARG1);
+                self.e.imm(LDA, id);
+                self.e.abs(STA, ARG4);
+                self.e.jsr("__set_map_tile");
+            }
+            "reset_map" => {
+                let (_, _, id) = self.map_label(&args[0])?;
+                self.e.imm(LDA, id);
+                self.e.abs(STA, ARG4);
+                self.e.jsr("__reset_map");
             }
             "metasprite" => {
                 let label = match &args[3].kind {
@@ -324,8 +343,8 @@ impl Codegen {
         r
     }
 
-    /// PTR = tiles, PTR2 = attributes, ARG2 = width.
-    fn map_pointers(&mut self, label: &str, width: u8) {
+    /// PTR = tiles, PTR2 = attributes, ARG2 = width, ARG3 = map id.
+    fn map_pointers(&mut self, label: &str, width: u8, id: u8) {
         self.pointer(label);
         let attrs = format!("{label}_a");
         self.e.ins(LDA, Operand::imm_lo(&attrs));
@@ -334,6 +353,8 @@ impl Codegen {
         self.e.abs(STA, PTR2 + 1);
         self.e.imm(LDA, width);
         self.e.abs(STA, ARG2);
+        self.e.imm(LDA, id);
+        self.e.abs(STA, ARG3);
     }
 
     /// `play_music(melody[, bass[, harmony]])`: voices are set up while the engine is
@@ -379,10 +400,10 @@ impl Codegen {
         Ok(())
     }
 
-    fn map_label(&self, e: &Expr) -> R<(String, u8)> {
+    fn map_label(&self, e: &Expr) -> R<(String, u8, u8)> {
         if let ExprKind::Var(n) = &e.kind {
-            if let Some(Sym::Map { label, width }) = self.lookup(n) {
-                return Ok((label, width));
+            if let Some(Sym::Map { label, width, id }) = self.lookup(n) {
+                return Ok((label, width, id));
             }
         }
         self.err(e.pos, "expected a map (declare one with `map NAME = [...]`)")
@@ -707,6 +728,37 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.abs(LDX, MAP_T + 1);
     e.abs(STX, PTR + 1);
     e.jsr("__col_addr");
+    // With map changes recorded, copy the column to RAM and apply this map's changes.
+    e.abs(LDA, OV_COUNT);
+    e.br(BEQ, "__sc_addr");
+    e.imm(LDY, 29);
+    e.label("__sc_copy");
+    e.ins(LDA, Operand::IndY(PTR as u8));
+    e.ins(STA, Operand::abs_y(COL_BUF));
+    e.imp(DEY);
+    e.br(BPL, "__sc_copy");
+    e.imm(LDX, 0);
+    e.label("__sc_ov");
+    e.abs(CPX, OV_COUNT);
+    e.br(BCS, "__sc_ov_done");
+    e.ins(LDA, Operand::abs_x(OV_ID));
+    e.abs(CMP, MAP_ID);
+    e.br(BNE, "__sc_ov_next");
+    e.ins(LDA, Operand::abs_x(OV_COL));
+    e.abs(CMP, SC_COL);
+    e.br(BNE, "__sc_ov_next");
+    e.ins(LDY, Operand::abs_x(OV_ROW));
+    e.ins(LDA, Operand::abs_x(OV_TILE));
+    e.ins(STA, Operand::abs_y(COL_BUF));
+    e.label("__sc_ov_next");
+    e.imp(INX);
+    e.jmp("__sc_ov");
+    e.label("__sc_ov_done");
+    e.imm(LDA, COL_BUF as u8);
+    e.abs(STA, PTR);
+    e.imm(LDA, (COL_BUF >> 8) as u8);
+    e.abs(STA, PTR + 1);
+    e.label("__sc_addr");
     e.abs(LDA, SC_COL);
     e.imm(AND, 0x1F);
     e.abs(STA, TMP0);
@@ -717,7 +769,33 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.acc(LSR);
     e.imm(ORA, 0x20);
     e.abs(STA, TMP1);
+    // Skip the status bar rows: source += n, VRAM address += n * 32, length = 30 - n.
+    e.abs(LDA, STATUS_ROWS);
+    e.br(BEQ, "__sc_len");
+    e.imp(CLC);
+    e.abs(ADC, PTR);
+    e.abs(STA, PTR);
+    e.br(BCC, "__sc_src_nc");
+    e.abs(INC, PTR + 1);
+    e.label("__sc_src_nc");
+    e.abs(LDA, STATUS_ROWS);
+    e.acc(LSR);
+    e.acc(LSR);
+    e.acc(LSR); // n >> 3: 1 only for n = 8
+    e.imp(CLC);
+    e.abs(ADC, TMP1);
+    e.abs(STA, TMP1);
+    e.abs(LDA, STATUS_ROWS);
+    for _ in 0..5 {
+        e.acc(ASL);
+    }
+    e.imp(CLC);
+    e.abs(ADC, TMP0);
+    e.abs(STA, TMP0); // slot & 31 + (n * 32 & 255) never carries
+    e.label("__sc_len");
     e.imm(LDA, 30);
+    e.imp(SEC);
+    e.abs(SBC, STATUS_ROWS);
     e.abs(STA, ARG2);
     e.imm(LDA, 0x80);
     e.abs(STA, TMP3);
@@ -728,7 +806,11 @@ pub fn emit_runtime(e: &mut Emitter) {
     // A = attribute group (4 columns). Writes its 8 attribute bytes into ring group g % 16.
     e.label("__attr_group");
     e.abs(STA, AG);
-    e.imm(LDA, 0);
+    e.abs(LDA, STATUS_ROWS); // first attribute row fully below the status bar: ceil(n / 4)
+    e.imp(CLC);
+    e.imm(ADC, 3);
+    e.acc(LSR);
+    e.acc(LSR);
     e.abs(STA, SC_R);
     e.label("__ag_loop");
     e.abs(LDA, AG);
@@ -960,7 +1042,7 @@ pub fn emit_runtime(e: &mut Emitter) {
 
     // Remembers the map passed in PTR / PTR2 / ARG2 as the one being drawn or followed.
     e.label("__set_map");
-    for (src, dst) in [(PTR, MAP_T), (PTR + 1, MAP_T + 1), (PTR2, MAP_A), (PTR2 + 1, MAP_A + 1), (ARG2, MAP_W)] {
+    for (src, dst) in [(PTR, MAP_T), (PTR + 1, MAP_T + 1), (PTR2, MAP_A), (PTR2 + 1, MAP_A + 1), (ARG2, MAP_W), (ARG3, MAP_ID)] {
         e.abs(LDA, src);
         e.abs(STA, dst);
     }
@@ -976,6 +1058,13 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.abs(LDA, ARG2);
     e.imm(CMP, 30);
     e.br(BCS, "__mt_out");
+    e.abs(LDA, OV_COUNT);
+    e.br(BEQ, "__mt_rom");
+    e.jsr("__ov_find");
+    e.br(BCS, "__mt_rom");
+    e.ins(LDA, Operand::abs_x(OV_TILE));
+    e.imp(RTS);
+    e.label("__mt_rom");
     e.abs(LDA, ARG0);
     e.jsr("__col_addr");
     e.abs(LDY, ARG2);
@@ -983,6 +1072,127 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.imp(RTS);
     e.label("__mt_out");
     e.imm(LDA, 0);
+    e.imp(RTS);
+
+    // Finds change-list entry (map ARG4, column ARG0, row ARG2): X = index and C = 0,
+    // or X = OV_COUNT and C = 1 when there is none.
+    e.label("__ov_find");
+    e.imm(LDX, 0);
+    e.label("__ovf_loop");
+    e.abs(CPX, OV_COUNT);
+    e.br(BCS, "__ovf_done");
+    for (arr, key) in [(OV_ID, ARG4), (OV_COL, ARG0), (OV_ROW, ARG2)] {
+        e.ins(LDA, Operand::abs_x(arr));
+        e.abs(CMP, key);
+        e.br(BNE, "__ovf_next");
+    }
+    e.imp(CLC);
+    e.imp(RTS);
+    e.label("__ovf_next");
+    e.imp(INX);
+    e.jmp("__ovf_loop");
+    e.label("__ovf_done");
+    e.imp(RTS);
+
+    // ARG0 = tx, ARG1 = width, ARG2 = ty, ARG3 = tile, ARG4 = map id.
+    // Records the change (A = 1, or 0 when the list is full or the cell is outside the map)
+    // and, if the cell is on screen, writes it there too.
+    e.label("__set_map_tile");
+    e.imm(LDA, 0);
+    e.abs(STA, OV_RES);
+    e.abs(LDA, ARG0);
+    e.abs(CMP, ARG1);
+    e.br(BCS, "__smt_done");
+    e.abs(LDA, ARG2);
+    e.imm(CMP, 30);
+    e.br(BCS, "__smt_done");
+    e.jsr("__ov_find");
+    e.br(BCC, "__smt_store");
+    e.imm(CPX, OV_MAX);
+    e.br(BCS, "__smt_screen"); // full: not remembered, but still drawn
+    e.abs(LDA, ARG4);
+    e.ins(STA, Operand::abs_x(OV_ID));
+    e.abs(LDA, ARG0);
+    e.ins(STA, Operand::abs_x(OV_COL));
+    e.abs(LDA, ARG2);
+    e.ins(STA, Operand::abs_x(OV_ROW));
+    e.abs(INC, OV_COUNT);
+    e.label("__smt_store");
+    e.abs(LDA, ARG3);
+    e.ins(STA, Operand::abs_x(OV_TILE));
+    e.imm(LDA, 1);
+    e.abs(STA, OV_RES);
+    // On screen: the map is the one drawn, the row is below the status bar and the
+    // column is one of the 33 that can be visible (the ring holds exactly those).
+    e.label("__smt_screen");
+    e.abs(LDA, MAP_ID);
+    e.abs(CMP, ARG4);
+    e.br(BNE, "__smt_done");
+    e.abs(LDA, ARG2);
+    e.abs(CMP, STATUS_ROWS);
+    e.br(BCC, "__smt_done");
+    e.abs(LDA, ARG0);
+    e.imp(SEC);
+    e.abs(SBC, CAM_COL);
+    e.br(BCC, "__smt_done");
+    e.imm(CMP, 33);
+    e.br(BCS, "__smt_done");
+    e.abs(LDA, ARG2);
+    e.acc(LSR);
+    e.acc(LSR);
+    e.acc(LSR);
+    e.abs(STA, TMP1);
+    e.abs(LDA, ARG0);
+    e.imm(AND, 0x20);
+    e.acc(LSR);
+    e.acc(LSR);
+    e.acc(LSR);
+    e.imm(ORA, 0x20);
+    e.imp(CLC);
+    e.abs(ADC, TMP1);
+    e.abs(STA, TMP1);
+    e.abs(LDA, ARG2);
+    for _ in 0..5 {
+        e.acc(ASL);
+    }
+    e.abs(STA, TMP0);
+    e.abs(LDA, ARG0);
+    e.imm(AND, 0x1F);
+    e.abs(ORA, TMP0);
+    e.abs(STA, TMP0);
+    e.abs(LDA, ARG3);
+    e.abs(STA, PRINT_BUF);
+    e.imm(LDA, PRINT_BUF as u8);
+    e.abs(STA, PTR);
+    e.imm(LDA, (PRINT_BUF >> 8) as u8);
+    e.abs(STA, PTR + 1);
+    e.imm(LDA, 1);
+    e.abs(STA, ARG2);
+    e.jsr("__vram_write");
+    e.label("__smt_done");
+    e.abs(LDA, OV_RES);
+    e.imp(RTS);
+
+    // ARG4 = map id: removes that map's entries, keeping the others in order.
+    e.label("__reset_map");
+    e.imm(LDX, 0);
+    e.imm(LDY, 0);
+    e.label("__rm_loop");
+    e.abs(CPX, OV_COUNT);
+    e.br(BCS, "__rm_done");
+    e.ins(LDA, Operand::abs_x(OV_ID));
+    e.abs(CMP, ARG4);
+    e.br(BEQ, "__rm_skip");
+    for arr in [OV_ID, OV_COL, OV_ROW, OV_TILE] {
+        e.ins(LDA, Operand::abs_x(arr));
+        e.ins(STA, Operand::abs_y(arr));
+    }
+    e.imp(INY);
+    e.label("__rm_skip");
+    e.imp(INX);
+    e.jmp("__rm_loop");
+    e.label("__rm_done");
+    e.abs(STY, OV_COUNT);
     e.imp(RTS);
 
     e.comment("---- runtime: metasprites ----");

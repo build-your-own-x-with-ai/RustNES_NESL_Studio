@@ -71,6 +71,21 @@ pub const VOICES: [u16; 3] = [0x0380, 0x0388, 0x0390];
 pub const MU_ON: u16 = 0x0398; // bit per playing voice
 pub const MU_NOTE: u16 = 0x0399;
 pub const MU_ARG: u16 = 0x039A;
+// Editable maps (006) and the status bar.
+pub const OV_COUNT: u16 = 0x039B;
+pub const STATUS_ROWS: u16 = 0x039C;
+/// Map drawn / followed last (1-based declaration number, 0 = none).
+pub const MAP_ID: u16 = 0x039D;
+pub const OV_RES: u16 = 0x039E;
+/// The change list below is only reserved (user RAM moves to `OV_END`) when the
+/// program calls `set_map_tile`; otherwise `OV_COUNT` stays 0 and it is never touched.
+pub const COL_BUF: u16 = 0x03A0; // 30 bytes
+pub const OV_MAX: u8 = 64;
+pub const OV_ID: u16 = 0x03BE;
+pub const OV_COL: u16 = OV_ID + OV_MAX as u16;
+pub const OV_ROW: u16 = OV_COL + OV_MAX as u16;
+pub const OV_TILE: u16 = OV_ROW + OV_MAX as u16;
+pub const OV_END: u16 = OV_TILE + OV_MAX as u16;
 pub const USER_RAM_START: u16 = 0x03A0;
 pub const USER_RAM_END: u16 = 0x0800;
 

@@ -95,6 +95,10 @@ pub fn signature(name: &str) -> Option<Signature> {
     })
 }
 
+/// Editor documentation for every built-in function: (name, signature, description).
+/// Kept in step with `signature()` by a test.
+pub const DOCS: &[(&str, &str, &str)] = &[];
+
 pub fn is_builtin_fn(name: &str) -> bool {
     signature(name).is_some()
 }
@@ -1704,4 +1708,50 @@ fn emit_music(e: &mut Emitter) {
     e.items.push(crate::asm::Item::Bytes(periods.iter().map(|p| *p as u8).collect()));
     e.label("__per_hi");
     e.items.push(crate::asm::Item::Bytes(periods.iter().map(|p| (p >> 8) as u8).collect()));
+}
+
+#[cfg(test)]
+mod doc_tests {
+    use super::*;
+
+    /// Every name matched in `signature()`, read from this file so a new built-in cannot
+    /// be added without documentation.
+    fn signature_names() -> Vec<String> {
+        let src = include_str!("builtins.rs");
+        let start = src.find("pub fn signature(name: &str)").unwrap();
+        let end = start + src[start..].find("_ => return None").unwrap();
+        let mut names = Vec::new();
+        for part in src[start..end].split('"').skip(1).step_by(2) {
+            if part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+                names.push(part.to_string());
+            }
+        }
+        names
+    }
+
+    #[test]
+    fn every_builtin_is_documented_once() {
+        let names = signature_names();
+        assert!(names.len() >= 30, "{names:?}");
+        for n in &names {
+            assert_eq!(DOCS.iter().filter(|d| d.0 == n).count(), 1, "`{n}` needs exactly one DOCS entry");
+        }
+        for (n, _, _) in DOCS {
+            assert!(names.iter().any(|x| x == n), "DOCS has `{n}`, which is not a built-in");
+        }
+    }
+
+    #[test]
+    fn documented_parameter_counts_match_the_compiler() {
+        for (name, sig, doc) in DOCS {
+            assert!(sig.starts_with(&format!("{name}(")), "{sig}");
+            assert!(!doc.is_empty(), "{name}");
+            let inner = &sig[sig.find('(').unwrap() + 1..sig.find(')').unwrap()];
+            let count = if inner.trim().is_empty() { 0 } else { inner.split(',').count() };
+            if *name == "play_music" {
+                continue; // 1 to 3 songs
+            }
+            assert_eq!(count, signature(name).unwrap().params.len(), "{sig}");
+        }
+    }
 }

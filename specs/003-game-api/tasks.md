@@ -29,13 +29,13 @@ description: "Task list for game development API"
 
 ## Phase 5: US3 metasprite (P2)
 
-- [ ] T308 [US3] 测试：OAM 布局、负偏移、越界隐藏、返回槽位、默认属性
-- [ ] T309 [US3] 实现：metasprite 数据与 `__metasprite`
+- [x] T308 [US3] 测试：OAM 布局、负偏移、越界隐藏、返回槽位、默认属性
+- [x] T309 [US3] 实现：metasprite 数据与 `__metasprite`
 
 ## Phase 6: US4 collide (P2)
 
-- [ ] T310 [US4] 测试：重叠/相邻/包含/255 边界、参数只求值一次
-- [ ] T311 [US4] 实现：collide 降级
+- [x] T310 [US4] 测试：重叠/相邻/包含/255 边界、参数只求值一次
+- [x] T311 [US4] 实现：collide 降级
 
 ## Phase 7: US5 sfx (P3)
 

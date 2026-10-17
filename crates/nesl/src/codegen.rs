@@ -369,8 +369,31 @@ impl Codegen {
                 self.globals.insert(name.clone(), Sym::Map { label: label.clone() });
                 self.data.push((label, bytes));
             }
-            Decl::Metasprite { pos, .. } => {
-                return self.err(*pos, "not implemented yet");
+            Decl::Metasprite { name, parts, pos } => {
+                self.define(name, *pos)?;
+                if parts.is_empty() || parts.len() > 63 {
+                    return self.err(*pos, format!("a metasprite needs 1 to 63 pieces, found {}", parts.len()));
+                }
+                let mut bytes = vec![parts.len() as u8];
+                for part in parts {
+                    for (e, signed) in [(&part.dx, true), (&part.dy, true), (&part.tile, false)] {
+                        let v = self.const_expr(e, "metasprite value")?;
+                        let range = if signed { -128..=127 } else { 0..=255 };
+                        if !range.contains(&v) {
+                            let what = if signed { "an offset (-128..=127)" } else { "a tile (0..=255)" };
+                            return self.err(e.pos, format!("constant {v} does not fit as {what}"));
+                        }
+                        bytes.push(v as u8);
+                    }
+                    let attr = match &part.attr {
+                        Some(a) => fit(self.const_expr(a, "metasprite attribute")?, Type::U8, a.pos)? as u8,
+                        None => 0,
+                    };
+                    bytes.push(attr);
+                }
+                let label = format!("ms_{name}");
+                self.globals.insert(name.clone(), Sym::Metasprite { label: label.clone() });
+                self.data.push((label, bytes));
             }
             Decl::Tile { index, rows, pos } => {
                 let idx = self.const_expr(index, "tile index")?;
@@ -1467,6 +1490,23 @@ impl Codegen {
             }
         }
         Ok(())
+    }
+
+    /// Binds `names` to fresh static u8 slots in a new scope (caller pops it).
+    pub(crate) fn hidden_u8_scope(&mut self, names: &[&str], pos: Pos) -> R<Vec<u16>> {
+        let mut scope = HashMap::new();
+        let mut addrs = Vec::new();
+        for n in names {
+            let addr = self.alloc(1, true, pos)?;
+            scope.insert(n.to_string(), Sym::Var { addr, ty: Type::U8 });
+            addrs.push(addr);
+        }
+        self.scopes.push(scope);
+        Ok(addrs)
+    }
+
+    pub(crate) fn pop_scope(&mut self) {
+        self.scopes.pop();
     }
 
     /// Lowers `match` to a hidden local holding the scrutinee and one condition per arm.

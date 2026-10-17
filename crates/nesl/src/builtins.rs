@@ -17,7 +17,7 @@ pub fn constant(name: &str) -> Option<u32> {
 }
 
 use crate::asm::{Op::*, Operand};
-use crate::ast::{Expr, ExprKind, Pos, Type};
+use crate::ast::{BinOp, Expr, ExprKind, Pos, Type};
 use crate::codegen::{contains_call, Codegen, Sym, R};
 use crate::runtime::*;
 
@@ -31,6 +31,8 @@ pub enum Param {
     Text,
     /// A `map` declaration.
     Map,
+    /// A `metasprite` declaration.
+    Meta,
 }
 
 pub struct Signature {
@@ -61,6 +63,8 @@ pub fn signature(name: &str) -> Option<Signature> {
         "play_tone" => sig!(U16 => None),
         "draw_map" => sig!(Map => None),
         "map_tile" => sig!(Map, U8, U8 => U8),
+        "metasprite" => sig!(U8, U8, U8, Meta => U8),
+        "collide" => sig!(U8, U8, U8, U8, U8, U8, U8, U8 => U8),
         _ => return None,
     })
 }
@@ -191,6 +195,19 @@ impl Codegen {
                 self.pointer(&label);
                 self.e.jsr("__map_tile");
             }
+            "metasprite" => {
+                let label = match &args[3].kind {
+                    ExprKind::Var(n) => match self.lookup(n) {
+                        Some(Sym::Metasprite { label }) => label,
+                        _ => return self.err(args[3].pos, "expected a metasprite (declare one with `metasprite NAME = [...]`)"),
+                    },
+                    _ => return self.err(args[3].pos, "expected a metasprite (declare one with `metasprite NAME = [...]`)"),
+                };
+                self.slots(&[(&args[0], Type::U8, ARG0), (&args[1], Type::U8, ARG1), (&args[2], Type::U8, ARG2)])?;
+                self.pointer(&label);
+                self.e.jsr("__metasprite");
+            }
+            "collide" => self.collide(args, pos)?,
             _ => unreachable!("missing builtin {name}"),
         }
         Ok(sig.ret)
@@ -230,6 +247,34 @@ impl Codegen {
             }
         }
         Ok(())
+    }
+
+    /// Rectangles overlap iff each starts before the other ends, compared in 16 bits so
+    /// `x + w` past 255 does not wrap. Arguments are evaluated once into hidden slots.
+    fn collide(&mut self, args: &[Expr], pos: Pos) -> R<()> {
+        const NAMES: [&str; 8] = ["$ax", "$ay", "$aw", "$ah", "$bx", "$by", "$bw", "$bh"];
+        for a in args {
+            self.check_fits(a, Type::U8)?;
+        }
+        let addrs = self.hidden_u8_scope(&NAMES, pos)?;
+        let list: Vec<(&Expr, Type, u16)> = args.iter().zip(&addrs).map(|(a, s)| (a, Type::U8, *s)).collect();
+        let r = self.slots(&list).and_then(|_| {
+            let v = |n: &str| Expr { kind: ExprKind::Var(n.to_string()), pos };
+            let wide = |n: &str| Expr { kind: ExprKind::Cast(Box::new(v(n)), Type::U16), pos };
+            let bin = |op, l: Expr, r: Expr| Expr { kind: ExprKind::Binary(op, Box::new(l), Box::new(r)), pos };
+            // a starts before b ends, and b starts before a ends, on both axes
+            let axis = |p: &str, size_p: &str, q: &str, size_q: &str| {
+                bin(
+                    BinOp::LogAnd,
+                    bin(BinOp::Lt, wide(p), bin(BinOp::Add, wide(q), v(size_q))),
+                    bin(BinOp::Lt, wide(q), bin(BinOp::Add, wide(p), v(size_p))),
+                )
+            };
+            let all = bin(BinOp::LogAnd, axis("$ax", "$aw", "$bx", "$bw"), axis("$ay", "$ah", "$by", "$bh"));
+            self.expr(&all, Type::U8)
+        });
+        self.pop_scope();
+        r
     }
 
     fn map_label(&self, e: &Expr) -> R<String> {
@@ -560,6 +605,67 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.imp(RTS);
     e.label("__mt_out");
     e.imm(LDA, 0);
+    e.imp(RTS);
+
+    e.comment("---- runtime: metasprites ----");
+    // ARG0 = first slot, ARG1 = x, ARG2 = y, PTR = [count, (dx, dy, tile, attr)...].
+    // Returns ARG0 + count. A piece whose position wraps past a screen edge is hidden.
+    e.label("__metasprite");
+    e.imm(LDY, 0);
+    e.ins(LDA, Operand::IndY(PTR as u8));
+    e.abs(STA, TMP3);
+    e.imp(INY);
+    e.abs(LDA, ARG0);
+    e.acc(ASL);
+    e.acc(ASL);
+    e.imp(TAX);
+    e.label("__ms_piece");
+    e.imm(LDA, 0);
+    e.abs(STA, TMP5); // hidden flag
+    // For each axis: pos = base + d; it wrapped iff carry != sign(d).
+    for (base, out) in [(ARG1, TMP1), (ARG2, TMP4)] {
+        e.ins(LDA, Operand::IndY(PTR as u8));
+        e.abs(STA, TMP0);
+        e.imp(CLC);
+        e.abs(ADC, base);
+        e.abs(STA, out);
+        e.imm(LDA, 0);
+        e.acc(ROL); // A = carry
+        e.abs(STA, TMP2);
+        e.abs(LDA, TMP0);
+        e.acc(ASL); // carry = sign of d
+        e.imm(LDA, 0);
+        e.acc(ROL);
+        e.abs(EOR, TMP2);
+        e.abs(ORA, TMP5);
+        e.abs(STA, TMP5);
+        e.imp(INY);
+    }
+    e.ins(LDA, Operand::IndY(PTR as u8));
+    e.ins(STA, Operand::abs_x(OAM_SHADOW + 1));
+    e.imp(INY);
+    e.ins(LDA, Operand::IndY(PTR as u8));
+    e.ins(STA, Operand::abs_x(OAM_SHADOW + 2));
+    e.imp(INY);
+    e.abs(LDA, TMP1);
+    e.ins(STA, Operand::abs_x(OAM_SHADOW + 3));
+    e.abs(LDA, TMP5);
+    e.br(BNE, "__ms_hide");
+    e.abs(LDA, TMP4);
+    e.jmp("__ms_store");
+    e.label("__ms_hide");
+    e.imm(LDA, 0xFF);
+    e.label("__ms_store");
+    e.ins(STA, Operand::abs_x(OAM_SHADOW));
+    for _ in 0..4 {
+        e.imp(INX);
+    }
+    e.abs(DEC, TMP3);
+    e.br(BNE, "__ms_piece");
+    e.imm(LDY, 0);
+    e.ins(LDA, Operand::IndY(PTR as u8));
+    e.imp(CLC);
+    e.abs(ADC, ARG0);
     e.imp(RTS);
 
     e.comment("---- runtime: sprites, input, random, sound ----");

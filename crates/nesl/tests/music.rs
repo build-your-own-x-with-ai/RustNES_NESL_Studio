@@ -144,3 +144,79 @@ fn pulse_voices_reject_notes_below_a1_but_bass_accepts_them() {
     build(&format!("{low} music M = \"C\"; fn main() {{ play_music(M, L); }}"));
     assert!(errors(&format!("{low} music M = \"C\"; fn main() {{ play_music(M, M, L); }}"))[0].message.contains("below A1"));
 }
+
+// ---------------------------------------------------------------- US3 custom sounds
+
+#[test]
+fn pulse_sound_declaration_drives_pulse_2() {
+    let (_, per) = trace(&song("sound S = (pulse, 0x120, 3, 6, 9, 1);", "sfx(S)"), 10);
+    assert_eq!(writes(&per, 0x4007).iter().map(|(_, v)| *v).collect::<Vec<_>>(), vec![1], "period high byte once");
+    let lows: Vec<u8> = writes(&per, 0x4006).into_iter().map(|(_, v)| v).collect();
+    assert_eq!(lows, vec![0x23, 0x26, 0x29, 0x2C, 0x2F], "period slides by +3 each frame");
+    let ctrl: Vec<u8> = writes(&per, 0x4004).into_iter().map(|(_, v)| v).collect();
+    assert!(ctrl.iter().all(|v| v & 0xF0 == 0x70), "duty 1 + constant volume: {ctrl:x?}");
+    assert!(ctrl.iter().all(|v| v & 0x0F <= 9), "volume capped at 9: {ctrl:x?}");
+    assert_eq!(writes(&per, 0x4015).last().map(|(_, v)| v & 0x02), Some(0), "pulse 2 released at the end");
+}
+
+#[test]
+fn noise_sound_declaration() {
+    let (_, per) = trace(&song("sound N = (noise, 5, 0, 20);", "sfx(N)"), 4);
+    assert!(writes(&per, 0x400E).iter().all(|(_, v)| *v == 5));
+    assert!(!writes(&per, 0x400C).is_empty());
+    assert!(writes(&per, 0x4015).iter().any(|(_, v)| v & 0x08 != 0));
+}
+
+#[test]
+fn custom_sounds_are_numbered_after_the_builtins() {
+    let r = run("sound A = (pulse, 0x80, 0, 4); sound B = (noise, 1, 0, 4); var a: u8; var b: u8;
+        fn main() { a = A; b = B; sfx(SFX_JUMP); sfx(B); }");
+    assert_eq!((r.u8("a"), r.u8("b")), (5, 6));
+}
+
+#[test]
+fn sound_errors() {
+    let m = |src: &str| errors(src)[0].message.clone();
+    assert!(m("sound S = (square, 0x80, 0, 4); fn main() {}").contains("channel"));
+    assert!(m("sound S = (pulse, 5, 0, 4); fn main() {}").contains("period"));
+    assert!(m("sound S = (noise, 16, 0, 4); fn main() {}").contains("period"));
+    assert!(m("sound S = (pulse, 0x80, 200, 4); fn main() {}").contains("delta"));
+    assert!(m("sound S = (pulse, 0x80, 0, 0); fn main() {}").contains("frames"));
+    assert!(m("sound S = (pulse, 0x80, 0, 4, 16); fn main() {}").contains("volume"));
+    assert!(m("sound S = (pulse, 0x80, 0, 4, 9, 4); fn main() {}").contains("duty"));
+    let many: String = (0..28).map(|i| format!("sound S{i} = (pulse, 0x80, 0, 4); ")).collect();
+    assert!(m(&format!("{many} fn main() {{}}")).contains("at most 32"));
+}
+
+// ---------------------------------------------------------------- US4 coexistence
+
+#[test]
+fn sound_effects_borrow_pulse_2_from_the_harmony_then_give_it_back() {
+    let (_, per) = trace(
+        "music M = \"L8 C D E F\"; music B = \"O2 L4 C G\"; music H = \"L16 C\"; var t: u8;
+         fn main() { play_music(M, B, H); loop { wait_vblank(); t += 1; if t == 20 { sfx(SFX_JUMP); } } }",
+        120,
+    );
+    // SFX_JUMP writes period high byte 0, the harmony (C4, period $1AB) writes 1.
+    let start = writes(&per, 0x4007).into_iter().find(|(_, v)| *v == 0).unwrap().0;
+    let end = writes(&per, 0x4015).into_iter().find(|(f, v)| *f > start && v & 0x02 == 0).unwrap().0;
+    assert!(end - start >= 14, "effect lasted {} frames", end - start);
+    let harmony_on: Vec<usize> = writes(&per, 0x4007).into_iter().filter(|(_, v)| *v == 1).map(|(f, _)| f).collect();
+    assert!(harmony_on.iter().any(|f| *f < start), "harmony played before");
+    assert!(!harmony_on.iter().any(|f| (start..=end).contains(f)), "harmony yielded: {harmony_on:?} in {start}..={end}");
+    assert!(harmony_on.iter().any(|f| *f > end), "harmony came back");
+    // melody keeps its 15-frame grid throughout
+    let mel: Vec<usize> = writes(&per, 0x4002).into_iter().map(|(f, _)| f).collect();
+    assert!(mel.windows(2).all(|w| w[1] - w[0] == 15), "{mel:?}");
+}
+
+#[test]
+fn stop_sound_also_stops_the_music() {
+    let (_, per) = trace(
+        "music M = \"L8 CDEFGAB\"; var t: u8;
+         fn main() { play_music(M); loop { wait_vblank(); t += 1; if t == 20 { stop_sound(); } } }",
+        100,
+    );
+    assert!(writes(&per, 0x4002).iter().all(|(f, _)| *f < 25));
+    assert_eq!(writes(&per, 0x4015).last().unwrap().1, 0);
+}

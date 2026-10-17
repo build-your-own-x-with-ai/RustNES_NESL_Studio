@@ -201,8 +201,9 @@ impl Parser {
                 Ok(Decl::Struct { name, fields, pos })
             }
             // `map` and `metasprite` are contextual: only `map NAME =` at the top level declares one.
-            Tok::Ident(kw) if (kw == "map" || kw == "metasprite") && self.is_decl_head() => {
-                let is_map = kw == "map";
+            Tok::Ident(kw) if (kw == "map" || kw == "metasprite" || kw == "palette_zone") && self.is_decl_head() => {
+                let kind = kw.clone();
+                let is_map = kind != "metasprite";
                 self.advance();
                 let name = self.ident()?;
                 self.expect_sym("=")?;
@@ -221,7 +222,11 @@ impl Parser {
                             break;
                         }
                     }
-                    Decl::Map { name, rows, pos }
+                    if kind == "map" {
+                        Decl::Map { name, rows, pos }
+                    } else {
+                        Decl::PaletteZone { name, rows, pos }
+                    }
                 } else {
                     let mut parts = Vec::new();
                     while !self.is_sym("]") {

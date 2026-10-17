@@ -92,6 +92,10 @@ fn runner_scrolls_through_the_level_without_glitches() {
     let cam = u16v(&nes, "cam");
     assert_eq!(cam, 128 * 8 - 256, "camera reached the end of the level");
     assert_eq!(nes.peek(out.vars["won"].addr), 1, "the flag was reached (x = {furthest})");
+    let w = &nes.bus.apu_writes;
+    for (reg, voice) in [(0x4002, "melody"), (0x400A, "bass"), (0x4006, "harmony")] {
+        assert!(w.iter().filter(|(a, _)| *a == reg).count() > 20, "{voice} plays");
+    }
     assert!(nes.peek(out.vars["score"].addr) > 0, "coins collected");
     assert!(cam > 0, "camera followed");
     assert_eq!(nes.bus.render_conflicts, 0);

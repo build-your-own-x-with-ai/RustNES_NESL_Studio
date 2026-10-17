@@ -6,6 +6,7 @@ pub mod builtins;
 pub mod chr;
 pub mod codegen;
 pub mod lexer;
+pub mod mml;
 pub mod parser;
 pub mod rom;
 pub mod runtime;

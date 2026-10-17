@@ -51,6 +51,10 @@ pub enum Decl {
     Tile { index: Expr, rows: Vec<(String, Pos)>, pos: Pos },
     /// `map NAME = ["row", ...];` — a 32x30 background screen drawn from text.
     Map { name: String, rows: Vec<(String, Pos)>, pos: Pos },
+    /// `music NAME = "MML";` or `= ["MML", ...]` — each string keeps its position for errors.
+    Music { name: String, parts: Vec<(String, Pos)>, pos: Pos },
+    /// `sound NAME = (pulse|noise, period, delta, frames[, volume[, duty]]);`
+    Sound { name: String, channel: (String, Pos), args: Vec<Expr>, pos: Pos },
     /// `palette_zone MAP = ["0123", ...];` — background palette per 16x16 area of a map.
     PaletteZone { name: String, rows: Vec<(String, Pos)>, pos: Pos },
     /// `metasprite NAME = [(dx, dy, tile[, attr]), ...];`

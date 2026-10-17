@@ -58,3 +58,45 @@ fn palette_zone_declaration() {
     }
     assert!(matches!(&p.items[1], Decl::Var { name, .. } if name == "palette_zone"));
 }
+
+#[test]
+fn music_declarations() {
+    let p = parse("music A = \"C D E\"; music B = [\"O2 C\", \"G\"];").unwrap();
+    match &p.items[0] {
+        Decl::Music { name, parts, .. } => {
+            assert_eq!(name, "A");
+            assert_eq!(parts.len(), 1);
+            assert_eq!(parts[0].0, "C D E");
+            assert_eq!(parts[0].1.col, 11, "position of the string literal");
+        }
+        d => panic!("{d:?}"),
+    }
+    assert!(matches!(&p.items[1], Decl::Music { parts, .. } if parts.len() == 2 && parts[1].0 == "G"));
+}
+
+#[test]
+fn sound_declarations() {
+    let p = parse("sound L = (pulse, 0x30, -4, 10); sound N = (noise, 5, 0, 20, 15);").unwrap();
+    match &p.items[0] {
+        Decl::Sound { name, channel, args, .. } => {
+            assert_eq!(name, "L");
+            assert_eq!(channel.0, "pulse");
+            assert_eq!(args.iter().map(|a| a.to_string()).collect::<Vec<_>>(), vec!["48", "(neg 4)", "10"]);
+        }
+        d => panic!("{d:?}"),
+    }
+    assert!(matches!(&p.items[1], Decl::Sound { args, .. } if args.len() == 4));
+}
+
+#[test]
+fn music_and_sound_stay_usable_as_identifiers() {
+    let p = parse("var music: u8; var sound: u8; fn main() { music = sound; }").unwrap();
+    assert_eq!(p.items.len(), 3);
+}
+
+#[test]
+fn malformed_music_and_sound() {
+    assert!(parse("music M = 5;").unwrap_err().message.contains("music string"));
+    assert!(parse("sound S = (pulse, 1);").unwrap_err().message.contains("(channel, period, delta, frames"));
+    assert!(parse("sound S = (5, 1, 2, 3);").unwrap_err().message.contains("channel"));
+}

@@ -47,3 +47,104 @@ fn width_limit_is_255_columns() {
     let e = errors(&format!("{} fn main() {{}}", wide_map("W", 256)));
     assert!(e[0].message.contains("255"), "{}", e[0].message);
 }
+
+// ---------------------------------------------------------------- US2 camera
+
+/// The picture's scroll position as the PPU sees it: nametable bit from PPUCTRL + $2005 x.
+fn hardware_scroll(r: &Run) -> u16 {
+    ((r.nes.bus.ppuctrl & 1) as u16) << 8 | r.nes.bus.scroll.0 as u16
+}
+
+/// Every one of the 33 columns that can be on screen must hold the right map column.
+fn assert_visible_columns(r: &Run, cam: u16, width: usize, ctx: &str) {
+    let first = (cam / 8) as usize;
+    for c in first..(first + 33).min(width) {
+        for row in 0..30 {
+            assert_eq!(nt(r, c % 64, row), cell(c, row), "{ctx}: column {c} row {row} (camera {cam})");
+        }
+    }
+}
+
+const FOLLOW: &str = "
+    var hero: u16; var target: u16; var cam: u16;
+    fn main() {
+        draw_map(W);
+        ppu_on();
+        loop {
+            wait_vblank();
+            if hero < target { hero += 3; } else if hero > target { hero -= 3; }
+            camera_follow(hero, W);
+            cam = camera_x();
+        }
+    }";
+
+#[test]
+fn camera_scrolls_across_four_screens_and_back_without_glitches() {
+    let width = 128;
+    let src = format!("{}{FOLLOW}", wide_map("W", width));
+    let out = build(&src);
+    let mut nes = nes_sim::TestNes::from_ines(&out.rom).unwrap();
+    let addr = |n: &str| out.vars[n].addr;
+    let poke16 = |nes: &mut nes_sim::TestNes, a: u16, v: u16| {
+        nes.bus.ram[a as usize] = v as u8;
+        nes.bus.ram[a as usize + 1] = (v >> 8) as u8;
+    };
+    nes.run_frames(3).unwrap();
+    let mut max_cam = 0;
+    for (target, frames) in [(1020u16, 420u64), (0, 420)] {
+        poke16(&mut nes, addr("target"), target);
+        for f in 0..frames {
+            nes.run_frames(1).unwrap();
+            let r = Run { nes, out: out.clone() };
+            let cam = r.u16("cam");
+            max_cam = max_cam.max(cam);
+            if f % 3 == 0 {
+                // the scroll the PPU used this frame matches the camera of the previous one
+                assert_visible_columns(&r, cam, width, &format!("target {target}, frame {f}"));
+            }
+            nes = r.nes;
+        }
+    }
+    let r = Run { nes, out };
+    assert_eq!(max_cam, 128 * 8 - 256, "camera stops at the right edge");
+    assert_eq!(r.u16("cam"), 0, "and comes all the way back");
+    assert_eq!(hardware_scroll(&r), 0);
+    assert_eq!(r.nes.bus.render_conflicts, 0);
+}
+
+#[test]
+fn camera_keeps_hero_near_120_and_moves_at_most_8_pixels_a_frame() {
+    let src = format!("{}{FOLLOW}", wide_map("W", 128));
+    let mut r = run_frames(&src, 3, |_| {});
+    let t = r.addr("target") as usize;
+    let h = r.addr("hero") as usize;
+    // teleport the hero to x = 600 (target too, so it stays there)
+    for a in [t, h] {
+        r.nes.bus.ram[a] = (600u16 & 0xFF) as u8;
+        r.nes.bus.ram[a + 1] = (600u16 >> 8) as u8;
+    }
+    let mut prev = 0u16;
+    for _ in 0..80 {
+        r.nes.run_frames(1).unwrap();
+        let cam = r.u16("cam");
+        assert!(cam >= prev && cam - prev <= 8, "step {prev} -> {cam}");
+        prev = cam;
+    }
+    assert_eq!(prev, 600 - 120);
+    assert_eq!(hardware_scroll(&r), 480 % 512);
+    assert_eq!(r.nes.bus.render_conflicts, 0);
+}
+
+#[test]
+fn camera_follow_with_rendering_off_writes_directly() {
+    let r = run(&format!("{} var c: u16;
+        fn main() {{ draw_map(W); for i in 0..60 {{ camera_follow(400, W); }} c = camera_x(); }}", wide_map("W", 96)));
+    assert_eq!(r.u16("c"), 280);
+    assert_visible_columns(&r, 280, 96, "rendering off");
+}
+
+#[test]
+fn narrow_maps_never_scroll() {
+    let r = run(&format!("{} var c: u16; fn main() {{ draw_map(W); camera_follow(250, W); c = camera_x(); }}", wide_map("W", 32)));
+    assert_eq!(r.u16("c"), 0);
+}

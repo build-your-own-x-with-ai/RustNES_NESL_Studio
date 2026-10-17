@@ -24,8 +24,8 @@ description: "Task list for NESL language extensions"
 
 ## Phase 4: US2 i8 (P2)
 
-- [ ] T206 [US2] 测试：混合加减、有符号比较、符号扩展、算术右移、错误 `crates/nesl/tests/lang2.rs`
-- [ ] T207 [US2] 实现 I8 类型规则与代码生成 `crates/nesl/src/codegen.rs`
+- [x] T206 [US2] 测试：混合加减、有符号比较、符号扩展、算术右移、错误 `crates/nesl/tests/lang2.rs`
+- [x] T207 [US2] 实现 I8 类型规则与代码生成 `crates/nesl/src/codegen.rs`
 
 ## Phase 5: US3 u16 数组与局部数组 (P2)
 

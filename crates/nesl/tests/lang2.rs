@@ -68,6 +68,18 @@ fn signed_i8_arithmetic_and_comparisons() {
 }
 
 #[test]
+fn i8_constant_comparisons_negation_and_wrapping() {
+    let r = run("
+        var vx: i8 = -2; var c: [u8; 6]; var n: i8; var m: i8 = 127; var k: i8 = 100;
+        fn main() {
+            c[0] = vx < 0; c[1] = vx > -3; c[2] = vx <= -2; c[3] = 0 > vx; c[4] = vx == -2; c[5] = vx >= 1;
+            n = -vx; m += 1; k = k + k;
+        }");
+    assert_eq!(r.bytes("c"), vec![1, 1, 1, 1, 1, 0]);
+    assert_eq!((r.i8("n"), r.i8("m"), r.i8("k")), (2, -128, -56));
+}
+
+#[test]
 fn i8_sign_extension_to_u16() {
     let r = run("var v: i8 = -2; var w: u16 = 100; fn main() { w = v as u16; }");
     assert_eq!(r.u16("w"), 0xFFFE);

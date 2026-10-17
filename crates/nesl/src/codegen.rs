@@ -92,7 +92,8 @@ pub(crate) fn contains_call(e: &Expr) -> bool {
 /// Converts a constant to the bit pattern of `t`, rejecting values that do not fit.
 pub(crate) fn fit(v: i64, t: Type, pos: Pos) -> R<u16> {
     let max = type_max(t);
-    if v > max || v < -(max + 1) {
+    let min = if t == Type::I8 { -128 } else { -(max + 1) };
+    if v > max || v < min {
         return Err(Diagnostic::new(pos, format!("constant {v} does not fit in {t}")));
     }
     Ok((v & max) as u16)
@@ -559,8 +560,16 @@ impl Codegen {
                 let (a, b) = (self.ty(l)?, self.ty(r)?);
                 if op.is_comparison() || matches!(op, BinOp::LogAnd | BinOp::LogOr) {
                     Ok(Type::U8)
+                } else if a == Type::U16 || b == Type::U16 {
+                    Ok(Type::U16)
+                } else if matches!(op, BinOp::Shl | BinOp::Shr) {
+                    Ok(a)
+                } else if (a == Type::I8 && (b == Type::I8 || self.const_val(r).is_some()))
+                    || (b == Type::I8 && self.const_val(l).is_some())
+                {
+                    Ok(Type::I8)
                 } else {
-                    Ok(max_ty(a, b))
+                    Ok(Type::U8)
                 }
             }
             ExprKind::Cast(x, t) => {
@@ -572,8 +581,8 @@ impl Codegen {
 
     /// Checks that `e` can be stored into a `want`-typed location.
     pub(crate) fn check_fits(&self, e: &Expr, want: Type) -> R<()> {
-        if want == Type::U8 && self.ty(e)? == Type::U16 {
-            return self.err(e.pos, "mismatched types: expected u8, found u16 (use `as u8` to truncate)");
+        if want != Type::U16 && self.ty(e)? == Type::U16 {
+            return self.err(e.pos, format!("mismatched types: expected {want}, found u16 (use `as {want}` to truncate)"));
         }
         Ok(())
     }
@@ -610,7 +619,7 @@ impl Codegen {
         }
         Ok(match &e.kind {
             ExprKind::Var(name) => match self.lookup(name) {
-                Some(Sym::Var { addr, ty: Type::U8 }) => Some(Operand::abs(addr)),
+                Some(Sym::Var { addr, ty: Type::U8 | Type::I8 }) => Some(Operand::abs(addr)),
                 _ => None,
             },
             ExprKind::Index(name, idx) => self.const_index(name, idx, e.pos)?.map(Operand::Abs),
@@ -629,14 +638,26 @@ impl Codegen {
                 return Ok(Some((Operand::abs(addr), Operand::abs(addr + 1))));
             }
         }
+        if self.ty(e)? == Type::I8 {
+            return Ok(None);
+        }
         Ok(self.operand8(e)?.map(|o| (o, Operand::imm(0))))
     }
 
     // ------------------------------------------------------------------ expressions
 
+    /// Extends an 8-bit value in A to A:X when `want` is u16 (sign-extending i8).
     fn widen(&mut self, from: Type, want: Type) {
-        if from == Type::U8 && want == Type::U16 {
-            self.e.imm(LDX, 0);
+        if from == Type::U16 || want != Type::U16 {
+            return;
+        }
+        self.e.imm(LDX, 0);
+        if from == Type::I8 {
+            let pos = self.e.new_label();
+            self.e.imm(CMP, 0x80);
+            self.e.br(BCC, &pos);
+            self.e.imp(DEX);
+            self.e.label(&pos);
         }
     }
 
@@ -658,7 +679,7 @@ impl Codegen {
             return Ok(());
         }
         let nat = self.ty(e)?;
-        if nat == Type::U16 && want == Type::U8 {
+        if nat == Type::U16 && want != Type::U16 {
             return self.check_fits(e, want);
         }
         match &e.kind {
@@ -673,7 +694,7 @@ impl Codegen {
             }
             ExprKind::Index(name, idx) => {
                 self.index(name, idx, e.pos)?;
-                self.widen(Type::U8, want);
+                self.widen(nat, want);
             }
             ExprKind::Call(name, args) => {
                 let ret = self.call(name, args, e.pos)?;
@@ -709,12 +730,19 @@ impl Codegen {
                     self.e.imp(TYA);
                 }
             }
-            ExprKind::Binary(op, l, r) => self.arith(*op, l, r, want)?,
+            ExprKind::Binary(op, l, r) => {
+                // Operate at the target width when widening, otherwise at the natural
+                // type so i8 keeps arithmetic shifts.
+                let width = if want == Type::U16 { Type::U16 } else { nat };
+                self.arith(*op, l, r, width)?;
+            }
             ExprKind::Cast(x, t) => {
                 let inner = self.ty(x)?;
                 self.expr(x, inner)?;
-                if want == Type::U16 && (inner == Type::U8 || *t == Type::U8) {
-                    self.e.imm(LDX, 0);
+                if *t == Type::U16 {
+                    self.widen(inner, Type::U16);
+                } else {
+                    self.widen(*t, want);
                 }
             }
             ExprKind::Num(_) | ExprKind::Str(_) => unreachable!("handled by const_val / ty"),
@@ -751,8 +779,14 @@ impl Codegen {
     fn arith(&mut self, op: BinOp, l: &Expr, r: &Expr, want: Type) -> R<()> {
         use BinOp::*;
         let pow2 = self.const_val(r).filter(|v| *v > 0 && v & (v - 1) == 0).map(|v| v.trailing_zeros());
+        if want == Type::I8 && matches!(op, Div | Mod) || want == Type::I8 && op == Mul && pow2.is_none() {
+            return self.err(
+                l.pos,
+                format!("`{}` is not supported for i8 values (only `*` by a power of 2)", op.symbol()),
+            );
+        }
         match (op, want) {
-            (Add | Sub | And | Or | Xor, Type::U8) => {
+            (Add | Sub | And | Or | Xor, Type::U8 | Type::I8) => {
                 let opc = match op { Add => ADC, Sub => SBC, And => AND, Or => ORA, _ => EOR };
                 let rhs = match self.operand8(r)? {
                     Some(o) => {
@@ -864,14 +898,21 @@ impl Codegen {
 
     fn shift_const(&mut self, left: bool, n: i64, ty: Type) {
         let bits = if ty == Type::U16 { 16 } else { 8 };
-        if n >= bits {
+        if n >= bits && !(ty == Type::I8 && !left) {
             self.e.imm(LDA, 0);
             if ty == Type::U16 {
                 self.e.imm(LDX, 0);
             }
             return;
         }
-        if ty == Type::U8 {
+        if ty == Type::I8 && !left {
+            for _ in 0..n.min(7) {
+                self.e.imm(CMP, 0x80);
+                self.e.acc(ROR);
+            }
+            return;
+        }
+        if ty != Type::U16 {
             for _ in 0..n {
                 self.e.acc(if left { ASL } else { LSR });
             }
@@ -915,7 +956,11 @@ impl Codegen {
         self.e.br(BEQ, &done);
         match (left, ty) {
             (true, Type::U8 | Type::I8) => self.e.acc(ASL),
-            (false, Type::U8 | Type::I8) => self.e.acc(LSR),
+            (false, Type::U8) => self.e.acc(LSR),
+            (false, Type::I8) => {
+                self.e.imm(CMP, 0x80);
+                self.e.acc(ROR);
+            }
             (true, Type::U16) => {
                 self.e.acc(ASL);
                 self.e.abs(ROL, TMP1);
@@ -979,7 +1024,19 @@ impl Codegen {
     /// Jumps to `label` if `l op r` holds.
     fn compare(&mut self, op: BinOp, l: &Expr, r: &Expr, label: &str) -> R<()> {
         use BinOp::*;
-        let t = max_ty(self.ty(l)?, self.ty(r)?);
+        let (a, b) = (self.ty(l)?, self.ty(r)?);
+        let (lc, rc) = (self.const_val(l).is_some(), self.const_val(r).is_some());
+        if (a == Type::I8 && (b == Type::I8 || rc)) || (b == Type::I8 && lc) {
+            return self.compare_signed(op, l, r, label);
+        }
+        if (a == Type::I8) != (b == Type::I8) && !lc && !rc {
+            let (s, u) = if a == Type::I8 { (a, b) } else { (b, a) };
+            return self.err(
+                l.pos,
+                format!("mismatched types: cannot compare {s} with {u} (convert one side with `as`)"),
+            );
+        }
+        let t = max_ty(a, b);
         if t == Type::U8 {
             match self.operand8(r)? {
                 Some(o) => {
@@ -1064,6 +1121,41 @@ impl Codegen {
             }
             _ => unreachable!(),
         }
+        Ok(())
+    }
+
+    /// Signed 8-bit comparison: after `SEC; SBC r` the true sign of l - r is N ^ V.
+    fn compare_signed(&mut self, op: BinOp, l: &Expr, r: &Expr, label: &str) -> R<()> {
+        use BinOp::*;
+        // l > r  <=>  r < l,  l <= r  <=>  r >= l
+        let (l, r) = if matches!(op, Gt | Le) { (r, l) } else { (l, r) };
+        let rhs = match self.operand8(r)? {
+            Some(o) => {
+                self.expr(l, Type::I8)?;
+                o
+            }
+            None => {
+                self.expr(l, Type::I8)?;
+                self.e.imp(PHA);
+                self.expr(r, Type::I8)?;
+                self.e.abs(STA, TMP0);
+                self.e.imp(PLA);
+                Operand::abs(TMP0)
+            }
+        };
+        if matches!(op, Eq | Ne) {
+            self.e.ins(CMP, rhs);
+            self.e.br(if op == Eq { BEQ } else { BNE }, label);
+            return Ok(());
+        }
+        let no_overflow = self.e.new_label();
+        self.e.imp(SEC);
+        self.e.ins(SBC, rhs);
+        self.e.br(BVC, &no_overflow);
+        self.e.imm(EOR, 0x80);
+        self.e.label(&no_overflow);
+        // N is now set exactly when (the possibly swapped) l < r.
+        self.e.br(if matches!(op, Lt | Gt) { BMI } else { BPL }, label);
         Ok(())
     }
 
@@ -1181,7 +1273,7 @@ impl Codegen {
                 let addr = match self.lookup(name) {
                     Some(Sym::Array { addr, .. }) => addr,
                     Some(Sym::Data { .. }) => return self.err(*ipos, format!("cannot assign to constant array `{name}`")),
-                    Some(Sym::StructArray(sname)) => {
+                    Some(Sym::StructArray(_)) => {
                         return self.err(*ipos, format!("`{name}` is a struct array; access a field with `{name}[i].field`"));
                     }
                     Some(_) => return self.err(*ipos, format!("`{name}` is not an array")),

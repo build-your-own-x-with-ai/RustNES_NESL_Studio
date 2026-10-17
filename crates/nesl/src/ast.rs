@@ -49,6 +49,10 @@ pub enum Decl {
     Struct { name: String, fields: Vec<(String, Type)>, pos: Pos },
     Var { name: String, ty: VarType, init: Option<Expr>, pos: Pos },
     Tile { index: Expr, rows: Vec<(String, Pos)>, pos: Pos },
+    /// `map NAME = ["row", ...];` — a 32x30 background screen drawn from text.
+    Map { name: String, rows: Vec<(String, Pos)>, pos: Pos },
+    /// `metasprite NAME = [(dx, dy, tile[, attr]), ...];`
+    Metasprite { name: String, parts: Vec<MetaPart>, pos: Pos },
     Fn(Function),
 }
 
@@ -84,6 +88,15 @@ pub enum Stmt {
     Continue(Pos),
     Return(Option<Expr>, Pos),
     Expr(Expr),
+}
+
+/// One 8x8 piece of a metasprite.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MetaPart {
+    pub dx: Expr,
+    pub dy: Expr,
+    pub tile: Expr,
+    pub attr: Option<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

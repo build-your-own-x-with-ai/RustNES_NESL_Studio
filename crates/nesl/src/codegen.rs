@@ -344,6 +344,9 @@ impl Codegen {
                     }
                 }
             }
+            Decl::Map { pos, .. } | Decl::Metasprite { pos, .. } => {
+                return self.err(*pos, "not implemented yet");
+            }
             Decl::Tile { index, rows, pos } => {
                 let idx = self.const_expr(index, "tile index")?;
                 if !(0..=255).contains(&idx) {

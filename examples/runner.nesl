@@ -6,6 +6,13 @@ const PAL: [u8] = [
     0x21, 0x16, 0x27, 0x18,  0x21, 0x28, 0x38, 0x0F,  0x21, 0x30, 0x10, 0x0F,  0x21, 0x0F, 0x30, 0x16,
 ];
 
+// Three-voice background music: melody (pulse 1), bass (triangle), harmony (pulse 2).
+// All voices are 4 bars long so they loop together. Jump/coin effects borrow the harmony.
+music THEME = ["T150 O4 L8 C E G >C< G E C R | D F A >D< A F D R",
+               "E G B >E< B G E R | F A >C F< E D C4"];
+music BASS  = "T150 O2 L4 C G C G | D A D A | E B E B | F >C< G <G>";
+music HARM  = "T150 V6 @1 O4 L2 E G | F A | G B | A G";
+
 const GRAVITY = 1;
 const JUMP = -7;
 const FLOOR_LIMIT = 216;
@@ -89,6 +96,7 @@ fn main() {
     draw_map(WORLD);
     hero.x = 24; hero.y = 120;
     ppu_on();
+    play_music(THEME, BASS, HARM);
 
     loop {
         wait_vblank();

@@ -40,6 +40,6 @@ description: "Task list for music and custom sound effects"
 
 ## Phase 7: Polish
 
-- [ ] T513 runner 示例加入三声部音乐 + 测试；编辑器示例与高亮
-- [ ] T514 README / 语言参考 / 数据模型；clippy 清零
-- [ ] T515 合并到 `main`
+- [x] T513 runner 示例加入三声部音乐 + 测试；编辑器示例与高亮
+- [x] T514 README / 语言参考 / 数据模型；clippy 清零
+- [x] T515 合并到 `main`

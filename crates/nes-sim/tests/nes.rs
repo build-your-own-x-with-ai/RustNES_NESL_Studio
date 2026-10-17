@@ -305,3 +305,36 @@ fn illegal_opcode_is_reported() {
     let mut nes = machine(&[0x02]);
     assert!(nes.run_until_pc(0x9000, 1000).is_err());
 }
+
+#[test]
+fn counts_vram_writes_made_while_rendering_outside_vblank() {
+    // Main: rendering on, NMI on, then a loop that writes $2007 forever.
+    //   LDA #$18 / STA $2001 / LDA #$80 / STA $2000 / loop: STA $2007 / JMP loop
+    let main = [0xA9, 0x18, 0x8D, 0x01, 0x20, 0xA9, 0x80, 0x8D, 0x00, 0x20, 0x8D, 0x07, 0x20, 0x4C, 0x0A, 0x80];
+    // NMI: a few $2006/$2007 writes (inside vblank, fine) then RTI.
+    let nmi = [0x8D, 0x06, 0x20, 0x8D, 0x06, 0x20, 0x8D, 0x07, 0x20, 0x40];
+    let mut nes = TestNes::from_ines(&rom(&main, &nmi)).unwrap();
+    nes.run_frames(2).unwrap();
+    assert!(nes.bus.render_conflicts > 100, "main-loop writes are conflicts: {}", nes.bus.render_conflicts);
+}
+
+#[test]
+fn vblank_and_rendering_off_writes_are_not_conflicts() {
+    // Rendering off: unlimited $2007 writes are allowed.
+    let main = [0x8D, 0x07, 0x20, 0x4C, 0x00, 0x80];
+    let mut nes = machine(&main);
+    nes.run_frames(2).unwrap();
+    assert_eq!(nes.bus.render_conflicts, 0);
+
+    // Rendering on, but only the NMI handler (which runs in vblank) touches VRAM.
+    let main = [0xA9, 0x18, 0x8D, 0x01, 0x20, 0xA9, 0x80, 0x8D, 0x00, 0x20, 0x4C, 0x0A, 0x80];
+    let nmi = [0x8D, 0x06, 0x20, 0x8D, 0x06, 0x20, 0x8D, 0x07, 0x20, 0x8D, 0x07, 0x20, 0x40];
+    let mut nes = TestNes::from_ines(&rom(&main, &nmi)).unwrap();
+    nes.run_frames(5).unwrap();
+    assert_eq!(nes.bus.render_conflicts, 0);
+}
+
+#[test]
+fn bus_new_starts_with_no_conflicts() {
+    assert_eq!(NesBus::new(vec![], vec![]).render_conflicts, 0);
+}

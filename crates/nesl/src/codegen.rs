@@ -26,6 +26,10 @@ pub(crate) enum Sym {
     Struct(String),
     /// Marker for struct arrays; field access routes to Array("name.field", ...).
     StructArray(String),
+    /// A 32x30 background screen in ROM.
+    Map { label: String },
+    /// A metasprite table in ROM: `[count, (dx, dy, tile, attr)...]`.
+    Metasprite { label: String },
 }
 
 struct FnSig {
@@ -148,6 +152,11 @@ impl Codegen {
         }
         for d in &prog.items {
             if let Err(e) = self.declare(d) {
+                // Keep the name defined so later uses do not cascade into
+                // misleading "unknown" errors.
+                if let Decl::Map { name, .. } = d {
+                    self.globals.entry(name.clone()).or_insert(Sym::Map { label: "__bad_map".into() });
+                }
                 self.errors.push(e);
             }
         }
@@ -343,6 +352,53 @@ impl Codegen {
                         self.vars.insert(name.clone(), VarInfo { addr, size });
                     }
                 }
+            }
+            Decl::Map { name, rows, pos } => {
+                self.define(name, *pos)?;
+                if rows.len() > 30 {
+                    return self.err(rows[30].1, format!("a map has at most 30 rows, found {}", rows.len()));
+                }
+                let mut bytes = vec![b' '; 960];
+                for (y, (row, rpos)) in rows.iter().enumerate() {
+                    if !row.is_ascii() {
+                        return self.err(*rpos, "map rows may only contain ASCII characters");
+                    }
+                    if row.len() > 32 {
+                        return self.err(*rpos, format!("map row {} has {} columns; the limit is 32", y + 1, row.len()));
+                    }
+                    for (x, c) in row.bytes().enumerate() {
+                        bytes[y * 32 + x] = if c == b'.' { b' ' } else { c };
+                    }
+                }
+                let label = format!("m_{name}");
+                self.globals.insert(name.clone(), Sym::Map { label: label.clone() });
+                self.data.push((label, bytes));
+            }
+            Decl::Metasprite { name, parts, pos } => {
+                self.define(name, *pos)?;
+                if parts.is_empty() || parts.len() > 63 {
+                    return self.err(*pos, format!("a metasprite needs 1 to 63 pieces, found {}", parts.len()));
+                }
+                let mut bytes = vec![parts.len() as u8];
+                for part in parts {
+                    for (e, signed) in [(&part.dx, true), (&part.dy, true), (&part.tile, false)] {
+                        let v = self.const_expr(e, "metasprite value")?;
+                        let range = if signed { -128..=127 } else { 0..=255 };
+                        if !range.contains(&v) {
+                            let what = if signed { "an offset (-128..=127)" } else { "a tile (0..=255)" };
+                            return self.err(e.pos, format!("constant {v} does not fit as {what}"));
+                        }
+                        bytes.push(v as u8);
+                    }
+                    let attr = match &part.attr {
+                        Some(a) => fit(self.const_expr(a, "metasprite attribute")?, Type::U8, a.pos)? as u8,
+                        None => 0,
+                    };
+                    bytes.push(attr);
+                }
+                let label = format!("ms_{name}");
+                self.globals.insert(name.clone(), Sym::Metasprite { label: label.clone() });
+                self.data.push((label, bytes));
             }
             Decl::Tile { index, rows, pos } => {
                 let idx = self.const_expr(index, "tile index")?;
@@ -569,6 +625,8 @@ impl Codegen {
                 }
                 Some(Sym::Struct(_)) => self.err(e.pos, format!("`{name}` is a struct; access a field with `{name}.field`")),
                 Some(Sym::StructArray(_)) => self.err(e.pos, format!("`{name}` is a struct array; access a field with `{name}[i].field`")),
+                Some(Sym::Map { .. }) => self.err(e.pos, format!("`{name}` is a map; use `draw_map({name})` or `map_tile({name}, x, y)`")),
+                Some(Sym::Metasprite { .. }) => self.err(e.pos, format!("`{name}` is a metasprite; draw it with `metasprite(slot, x, y, {name})`")),
                 Some(Sym::Const(_)) => unreachable!(),
                 None => Err(self.unknown_var(name, e.pos)),
             },
@@ -1437,6 +1495,23 @@ impl Codegen {
             }
         }
         Ok(())
+    }
+
+    /// Binds `names` to fresh static u8 slots in a new scope (caller pops it).
+    pub(crate) fn hidden_u8_scope(&mut self, names: &[&str], pos: Pos) -> R<Vec<u16>> {
+        let mut scope = HashMap::new();
+        let mut addrs = Vec::new();
+        for n in names {
+            let addr = self.alloc(1, true, pos)?;
+            scope.insert(n.to_string(), Sym::Var { addr, ty: Type::U8 });
+            addrs.push(addr);
+        }
+        self.scopes.push(scope);
+        Ok(addrs)
+    }
+
+    pub(crate) fn pop_scope(&mut self) {
+        self.scopes.pop();
     }
 
     /// Lowers `match` to a hidden local holding the scrutinee and one condition per arm.

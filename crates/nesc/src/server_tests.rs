@@ -63,7 +63,7 @@ fn examples_endpoint_lists_bundled_examples() {
     let r = handle(&req("GET", "/api/examples", ""));
     let body = String::from_utf8(r.body).unwrap();
     assert!(r.content_type.starts_with("application/json"));
-    for name in ["hello", "sprite", "game", "shooter"] {
+    for name in ["hello", "sprite", "game", "shooter", "maze"] {
         assert!(body.contains(&format!("\"name\":\"{name}\"")), "{body}");
     }
     for (_, src) in EXAMPLES {

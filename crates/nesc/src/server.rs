@@ -35,6 +35,7 @@ pub struct Response {
 }
 
 const INDEX_HTML: &str = include_str!("../web/index.html");
+const STUDIO_JS: &str = include_str!("../web/studio.js");
 
 fn bad(status: u16, message: &str) -> HttpError {
     HttpError { status, message: message.into() }
@@ -96,17 +97,48 @@ pub fn handle(req: &Request) -> Response {
                     out.prg_used,
                     json_str(&out.listing)
                 ),
-                Err(errs) => {
-                    let items: Vec<String> = errs
-                        .iter()
-                        .map(|d| format!("{{\"line\":{},\"col\":{},\"message\":{}}}", d.line, d.col, json_str(&d.message)))
-                        .collect();
-                    format!("{{\"ok\":false,\"errors\":[{}]}}", items.join(","))
-                }
+                Err(errs) => format!("{{\"ok\":false,\"errors\":{}}}", diagnostics(&errs)),
             })
         }
+        ("POST", "/api/check") => {
+            let src = String::from_utf8_lossy(&req.body);
+            json(match nesl::compile(&src) {
+                Ok(_) => "{\"ok\":true,\"errors\":[]}".to_string(),
+                Err(errs) => format!("{{\"ok\":false,\"errors\":{}}}", diagnostics(&errs)),
+            })
+        }
+        ("GET", "/studio.js") => {
+            Response { status: 200, content_type: "text/javascript; charset=utf-8", body: STUDIO_JS.as_bytes().to_vec() }
+        }
+        ("GET", "/api/builtins") => json(builtins_json()),
         _ => Response { status: 404, content_type: "text/plain; charset=utf-8", body: b"not found".to_vec() },
     }
+}
+
+fn diagnostics(errs: &[nesl::Diagnostic]) -> String {
+    let items: Vec<String> = errs
+        .iter()
+        .map(|d| format!("{{\"line\":{},\"col\":{},\"message\":{}}}", d.line, d.col, json_str(&d.message)))
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+/// Everything the editor needs for completion and hover, straight from the compiler.
+fn builtins_json() -> String {
+    let functions: Vec<String> = nesl::builtins::DOCS
+        .iter()
+        .map(|(n, sig, doc)| format!("{{\"name\":{},\"sig\":{},\"doc\":{}}}", json_str(n), json_str(sig), json_str(doc)))
+        .collect();
+    let constants: Vec<String> = nesl::builtins::CONSTANTS.iter().map(|(n, _)| json_str(n)).collect();
+    // reserved keywords, contextual declarations and type names
+    let extra = ["map", "metasprite", "palette_zone", "music", "sound", "true", "false", "u8", "i8", "u16"];
+    let keywords: Vec<String> = nesl::lexer::KEYWORDS.iter().chain(extra.iter()).map(|k| json_str(k)).collect();
+    format!(
+        "{{\"functions\":[{}],\"constants\":[{}],\"keywords\":[{}]}}",
+        functions.join(","),
+        constants.join(","),
+        keywords.join(",")
+    )
 }
 
 fn reason(status: u16) -> &'static str {

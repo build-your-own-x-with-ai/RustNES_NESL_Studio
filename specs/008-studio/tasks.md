@@ -6,7 +6,7 @@ description: "Task list for NESL Studio editor enhancements"
 
 - [x] T801 创建分支 `008-studio` 与 spec/plan/tasks 文档
 - [x] T802 [US2] 测试 + 实现：`builtins::DOCS` 与 `signature()` 一一对应 `crates/nesl/src/builtins.rs`
-- [ ] T803 [US2] 测试 + 实现：`/studio.js`、`/api/builtins`、`/api/check` `crates/nesc/src/server.rs`
+- [x] T803 [US2] 测试 + 实现：`/studio.js`、`/api/builtins`、`/api/check` `crates/nesc/src/server.rs`
 - [ ] T804 [US1-3] 测试：`studio.test.js`（图块/地图/调色板写回、取词、补全、CHR 解码）+ Rust 调用器
 - [ ] T805 [US1-3] 实现 `studio.js`
 - [ ] T806 [US1-3] 测试：写回 → 编译 → 断言 ROM 字节（端到端）

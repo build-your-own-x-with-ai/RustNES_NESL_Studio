@@ -87,6 +87,7 @@ f(x, y);                               // 表达式语句
 > v3（[003-game-api](../../003-game-api/contracts/api.md)）新增：VRAM 队列（随时 `print`）、`set_tile`、`map`、`metasprite`、`collide`、`sfx`。
 > v4（[004-scrolling](../../004-scrolling/contracts/api.md)）新增：最宽 255 列的地图、`camera_follow` / `camera_x`、`palette_zone`。
 > v5（[005-music](../../005-music/contracts/api.md)）新增：`music`（MML）、`play_music` / `stop_music`、`sound` 自定义音效。
+> v6（[006-map-edit-status](../../006-map-edit-status/contracts/api.md)）新增：`set_map_tile` / `reset_map`、`status_bar`。
 
 ## 限制（v1）
 - 不支持递归、指针、结构体、有符号数、u16 数组、u16 乘除。

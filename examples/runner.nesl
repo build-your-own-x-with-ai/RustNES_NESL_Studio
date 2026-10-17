@@ -94,6 +94,8 @@ fn solid(x: u16, y: u8) -> u8 {
 fn main() {
     load_palette(PAL);
     draw_map(WORLD);
+    status_bar(3);                       // the top 3 rows stay put while the level scrolls
+    print(2, 1, "COINS");
     hero.x = 24; hero.y = 120;
     ppu_on();
     play_music(THEME, BASS, HARM);
@@ -130,12 +132,12 @@ fn main() {
             let cx = (hero.x + 4) >> 3;
             let cy = (hero.y + 8) >> 3;
             if map_tile(WORLD, cx, cy) == '$' {
-                // the map lives in ROM, so the coin is removed from the screen only
-                set_tile((cx & 31) as u8, cy, ' ');
+                // remembered in the map: the coin stays gone after scrolling away and back
+                set_map_tile(WORLD, cx as u8, cy, ' ');
                 score += 1;
                 sfx(SFX_COIN);
             }
-            if map_tile(WORLD, cx, cy) == '|' { won = 1; sfx(SFX_EXPLODE); }
+            if map_tile(WORLD, cx, cy) == '|' { won = 1; sfx(SFX_EXPLODE); print(20, 1, "YOU WIN!"); }
         }
         prev_pad = pad;
 
@@ -144,12 +146,7 @@ fn main() {
         // world -> screen coordinates
         cam = camera_x();
         let sx = hero.x - cam;
-        metasprite(0, sx as u8, hero.y, HERO);
-
-        // fixed HUD drawn with sprites (the font tiles are the ASCII codes)
-        sprite(10, 16, 16, 'S', 3);
-        sprite(11, 32, 16, '0' + score / 10, 3);
-        sprite(12, 40, 16, '0' + score % 10, 3);
-        if won { sprite(13, 112, 80, 'W', 3); sprite(14, 120, 80, 'I', 3); sprite(15, 128, 80, 'N', 3); }
+        metasprite(1, sx as u8, hero.y, HERO);   // sprite 0 belongs to the status bar
+        print_u8(8, 1, score);
     }
 }

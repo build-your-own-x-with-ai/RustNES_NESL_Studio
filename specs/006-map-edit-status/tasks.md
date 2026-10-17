@@ -29,9 +29,9 @@ description: "Task list for editable maps and the status bar"
 
 ## Phase 5: US3 示例
 
-- [ ] T608 runner 改用 `set_map_tile` 与状态栏 + 测试（金币不复活）
+- [x] T608 runner 改用 `set_map_tile` 与状态栏 + 测试（金币不复活）
 
 ## Phase 6: Polish
 
-- [ ] T609 README / 语言参考 / 数据模型；编辑器高亮；clippy 清零
-- [ ] T610 合并到 `main`
+- [x] T609 README / 语言参考 / 数据模型；编辑器高亮；clippy 清零
+- [x] T610 合并到 `main`

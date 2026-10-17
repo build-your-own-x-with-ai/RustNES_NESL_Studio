@@ -11,15 +11,109 @@ use crate::nes::NesBus;
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 240;
 
+#[derive(Clone, Copy, Default)]
+struct Regs {
+    ctrl: u8,
+    sx: u8,
+    sy: u8,
+}
+
+/// Register state after replaying every logged write made before `cycle`.
+fn regs_at(log: &[(u64, u8, u8)], cycle: u64) -> Regs {
+    let mut r = Regs::default();
+    for &(c, kind, v) in log {
+        if c >= cycle {
+            break;
+        }
+        match kind {
+            0 => r.ctrl = v,
+            1 => r.sx = v,
+            _ => r.sy = v,
+        }
+    }
+    r
+}
+
+fn palette(bus: &NesBus, addr: u16) -> u8 {
+    bus.vram[NesBus::vram_index(addr)] & 0x3F
+}
+
+/// Background colour number (0-3) and palette (0-3) at screen (x, y).
+fn bg_pixel(bus: &NesBus, ctrl: u8, sx: u8, sy: u8, x: usize, y: usize) -> (u8, u8) {
+    let wx = (ctrl as usize & 1) * 256 + sx as usize + x;
+    let mut wy = sy as usize + y;
+    if wy >= 240 {
+        wy -= 240;
+    }
+    // vertical mirroring: $2000/$2800 and $2400/$2C00
+    let nt = 0x2000 + ((wx >> 8) & 1) * 0x400;
+    let (tx, ty) = ((wx & 0xFF) / 8, wy / 8);
+    let tile = bus.vram[nt + ty * 32 + tx] as usize;
+    let attr = bus.vram[nt + 0x3C0 + (ty / 4) * 8 + tx / 4];
+    let shift = ((ty % 4) / 2) * 4 + ((tx % 4) / 2) * 2;
+    let pal = (attr >> shift) & 3;
+    let base = if ctrl & 0x10 != 0 { 0x1000 } else { 0 };
+    let a = base + tile * 16 + wy % 8;
+    let bit = 7 - (wx % 8);
+    let c = ((bus.vram[a] >> bit) & 1) | ((bus.vram[a + 8] >> bit) & 1) << 1;
+    (c, pal)
+}
+
+/// First sprite (lowest OAM index) with an opaque pixel at (x, y):
+/// (colour 1-3, palette, behind background).
+fn sprite_pixel(bus: &NesBus, ctrl: u8, x: usize, y: usize) -> Option<(u8, u8, bool)> {
+    let base = if ctrl & 0x08 != 0 { 0x1000 } else { 0 };
+    for s in bus.oam.chunks(4) {
+        let (top, tile, attr, left) = (s[0] as usize + 1, s[1] as usize, s[2], s[3] as usize);
+        if y < top || y >= top + 8 || x < left || x >= left + 8 {
+            continue;
+        }
+        let row = if attr & 0x80 != 0 { 7 - (y - top) } else { y - top };
+        let col = if attr & 0x40 != 0 { 7 - (x - left) } else { x - left };
+        let a = base + tile * 16 + row;
+        let bit = 7 - col;
+        let c = ((bus.vram[a] >> bit) & 1) | ((bus.vram[a + 8] >> bit) & 1) << 1;
+        if c != 0 {
+            return Some((c, attr & 3, attr & 0x20 != 0));
+        }
+    }
+    None
+}
+
 /// Renders frame `k` (0-based, counted from power-on) using the current VRAM/OAM.
-pub fn frame(_bus: &NesBus, _k: u64) -> Vec<u8> {
-    vec![0; WIDTH * HEIGHT]
+pub fn frame(bus: &NesBus, k: u64) -> Vec<u8> {
+    use crate::nes::{CYCLES_PER_FRAME, VBLANK_CYCLES};
+    let start = k * CYCLES_PER_FRAME + VBLANK_CYCLES;
+    // vertical scroll is copied during the pre-render line (dots 280-304)
+    let vertical = regs_at(&bus.reg_log, start + 280 / 3);
+    let mask = bus.ppumask;
+    let universal = palette(bus, 0x3F00);
+    let mut out = vec![universal; WIDTH * HEIGHT];
+    for y in 0..HEIGHT {
+        // horizontal scroll for line y is copied at dot 257 of the line before it
+        let h = regs_at(&bus.reg_log, start + (341 * y as u64 + 257) / 3);
+        for x in 0..WIDTH {
+            let left = x < 8;
+            let bg = if mask & 0x08 != 0 && !(left && mask & 0x02 == 0) {
+                bg_pixel(bus, h.ctrl, h.sx, vertical.sy, x, y)
+            } else {
+                (0, 0)
+            };
+            let spr = if mask & 0x10 != 0 && !(left && mask & 0x04 == 0) { sprite_pixel(bus, h.ctrl, x, y) } else { None };
+            out[y * WIDTH + x] = match (bg, spr) {
+                ((0, _), Some((c, p, _))) | ((_, _), Some((c, p, false))) => palette(bus, 0x3F10 + p as u16 * 4 + c as u16),
+                ((0, _), None) => universal,
+                ((c, p), _) => palette(bus, 0x3F00 + p as u16 * 4 + c as u16),
+            };
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nes::{pixel_cycle, CYCLES_PER_FRAME, VBLANK_CYCLES};
+    use crate::nes::{pixel_cycle, CYCLES_PER_FRAME};
 
     fn px(f: &[u8], x: usize, y: usize) -> u8 {
         f[y * WIDTH + x]
@@ -115,7 +209,6 @@ mod tests {
         b.reg_log = vec![(10, 0, 0x81), (20, 1, 8), (30, 2, 0)];
         let f = frame(&b, k);
         assert_eq!(px(&f, 0, 0), 0x12);
-        let _ = VBLANK_CYCLES;
     }
 
     #[test]

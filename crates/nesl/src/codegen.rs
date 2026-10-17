@@ -405,6 +405,12 @@ impl Codegen {
                         calls(body, out);
                     }
                     Stmt::Return(Some(e), _) | Stmt::Expr(e) => ex(e, out),
+                    Stmt::Match { value, arms, .. } => {
+                        ex(value, out);
+                        for arm in arms {
+                            calls(&arm.body, out);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1415,8 +1421,11 @@ impl Codegen {
                 self.zero_fill(addr, size);
                 self.scopes.last_mut().unwrap().extend(syms);
             }
-            Stmt::Match { pos, .. } => {
-                return self.err(*pos, "not implemented yet");
+            Stmt::Match { value, arms, pos } => {
+                self.scopes.push(HashMap::new());
+                let r = self.match_stmt(value, arms, *pos);
+                self.scopes.pop();
+                r?;
             }
             Stmt::Expr(e) => {
                 if let ExprKind::Call(name, args) = &e.kind {
@@ -1427,6 +1436,48 @@ impl Codegen {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Lowers `match` to a hidden local holding the scrutinee and one condition per arm.
+    fn match_stmt(&mut self, value: &Expr, arms: &[MatchArm], pos: Pos) -> R<()> {
+        let ty = self.ty(value)?;
+        let hidden = format!("$match{}", self.e.new_label());
+        self.expr(value, ty)?;
+        let addr = self.declare_local(&hidden, ty, pos)?;
+        self.store(addr, ty);
+        let var = Expr { kind: ExprKind::Var(hidden), pos };
+        let end = self.e.new_label();
+        for arm in arms {
+            let mut cond: Option<Expr> = None;
+            for pat in &arm.pats {
+                let test = match pat {
+                    Pattern::Wild => Expr { kind: ExprKind::Num(1), pos: arm.pos },
+                    Pattern::Value(v) => {
+                        self.const_expr(v, "match pattern")?;
+                        Expr { kind: ExprKind::Binary(BinOp::Eq, Box::new(var.clone()), Box::new(v.clone())), pos: v.pos }
+                    }
+                    Pattern::Range(lo, hi) => {
+                        if self.const_expr(lo, "match pattern")? > self.const_expr(hi, "match pattern")? {
+                            return self.err(lo.pos, "empty range pattern: the start is greater than the end");
+                        }
+                        let ge = Expr { kind: ExprKind::Binary(BinOp::Ge, Box::new(var.clone()), Box::new(lo.clone())), pos: lo.pos };
+                        let le = Expr { kind: ExprKind::Binary(BinOp::Le, Box::new(var.clone()), Box::new(hi.clone())), pos: hi.pos };
+                        Expr { kind: ExprKind::Binary(BinOp::LogAnd, Box::new(ge), Box::new(le)), pos: lo.pos }
+                    }
+                };
+                cond = Some(match cond {
+                    None => test,
+                    Some(c) => Expr { pos: c.pos, kind: ExprKind::Binary(BinOp::LogOr, Box::new(c), Box::new(test)) },
+                });
+            }
+            let next = self.e.new_label();
+            self.cond(cond.as_ref().expect("arm has a pattern"), &next, false)?;
+            self.block(&arm.body);
+            self.e.jmp(&end);
+            self.e.label(&next);
+        }
+        self.e.label(&end);
         Ok(())
     }
 

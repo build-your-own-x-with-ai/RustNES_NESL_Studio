@@ -34,8 +34,8 @@ description: "Task list for NESL language extensions"
 
 ## Phase 6: US4 match (P3)
 
-- [ ] T210 [US4] 测试：值/或/区间/通配/只求值一次/i8 负数模式 `crates/nesl/tests/lang2.rs`
-- [ ] T211 [US4] 实现 match 降级 `crates/nesl/src/codegen.rs`
+- [x] T210 [US4] 测试：值/或/区间/通配/只求值一次/i8 负数模式 `crates/nesl/tests/lang2.rs`
+- [x] T211 [US4] 实现 match 降级 `crates/nesl/src/codegen.rs`
 
 ## Phase 7: Polish
 

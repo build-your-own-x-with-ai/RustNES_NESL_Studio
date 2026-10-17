@@ -13,12 +13,19 @@ use crate::{Diagnostic, VarInfo};
 
 pub(crate) type R<T> = Result<T, Diagnostic>;
 
+/// Symbols to bind for a struct allocation, plus its contiguous (addr, size) region.
+type Allocation = (Vec<(String, Sym)>, u16, u16);
+
 #[derive(Clone, Debug)]
 pub(crate) enum Sym {
     Var { addr: u16, ty: Type },
-    Array { addr: u16, len: u16 },
+    Array { addr: u16, len: u16, elem: Type },
     Const(i64),
-    Data { label: String, len: u16 },
+    Data { label: String, len: u16, elem: Type },
+    /// Marker for struct variables; field access routes to Var("name.field").
+    Struct(String),
+    /// Marker for struct arrays; field access routes to Array("name.field", ...).
+    StructArray(String),
 }
 
 struct FnSig {
@@ -38,6 +45,7 @@ pub struct Codegen {
     globals: HashMap<String, Sym>,
     pub vars: BTreeMap<String, VarInfo>,
     funcs: HashMap<String, FnSig>,
+    structs: HashMap<String, Vec<(String, Type)>>,
     scopes: Vec<HashMap<String, Sym>>,
     /// (continue label, break label) for each enclosing loop.
     loops: Vec<(String, String)>,
@@ -61,7 +69,7 @@ fn max_ty(a: Type, b: Type) -> Type {
 
 fn type_max(t: Type) -> i64 {
     match t {
-        Type::U8 => 0xFF,
+        Type::U8 | Type::I8 => 0xFF,
         Type::U16 => 0xFFFF,
     }
 }
@@ -87,7 +95,8 @@ pub(crate) fn contains_call(e: &Expr) -> bool {
 /// Converts a constant to the bit pattern of `t`, rejecting values that do not fit.
 pub(crate) fn fit(v: i64, t: Type, pos: Pos) -> R<u16> {
     let max = type_max(t);
-    if v > max || v < -(max + 1) {
+    let min = if t == Type::I8 { -128 } else { -(max + 1) };
+    if v > max || v < min {
         return Err(Diagnostic::new(pos, format!("constant {v} does not fit in {t}")));
     }
     Ok((v & max) as u16)
@@ -106,6 +115,7 @@ impl Codegen {
             globals: HashMap::new(),
             vars: BTreeMap::new(),
             funcs: HashMap::new(),
+            structs: HashMap::new(),
             scopes: Vec::new(),
             loops: Vec::new(),
             cur_ret: None,
@@ -129,6 +139,13 @@ impl Codegen {
         runtime::emit_math(&mut self.e);
         crate::builtins::emit_runtime(&mut self.e);
 
+        for d in &prog.items {
+            if let Decl::Struct { name, fields, pos } = d {
+                if let Err(e) = self.declare_struct(name, fields, *pos) {
+                    self.errors.push(e);
+                }
+            }
+        }
         for d in &prog.items {
             if let Err(e) = self.declare(d) {
                 self.errors.push(e);
@@ -198,6 +215,66 @@ impl Codegen {
         Ok(a)
     }
 
+    fn declare_struct(&mut self, name: &str, fields: &[(String, Type)], pos: Pos) -> R<()> {
+        if self.structs.contains_key(name) {
+            return self.err(pos, format!("struct `{name}` is already defined"));
+        }
+        self.define(name, pos)?;
+        if fields.is_empty() {
+            return self.err(pos, "struct cannot be empty");
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (f, _) in fields {
+            if !seen.insert(f) {
+                return self.err(pos, format!("duplicate field `{f}` in struct `{name}`"));
+            }
+        }
+        self.structs.insert(name.to_string(), fields.to_vec());
+        Ok(())
+    }
+
+    /// Allocates `[elem; len]`; u16 arrays get a low-byte table then a high-byte table.
+    fn alloc_array(&mut self, elem: Type, len: &Expr, pos: Pos) -> R<(Sym, u16, u16)> {
+        let n = self.const_expr(len, "array length")?;
+        if !(1..=256).contains(&n) {
+            return self.err(len.pos, "array length must be between 1 and 256");
+        }
+        let size = n as u16 * if elem == Type::U16 { 2 } else { 1 };
+        let addr = self.alloc(size, false, pos)?;
+        Ok((Sym::Array { addr, len: n as u16, elem }, addr, size))
+    }
+
+    /// Allocates a struct (`len == None`) or struct array; returns the symbols to bind
+    /// (`name` plus one per field) and the contiguous (addr, size) region.
+    fn alloc_struct(&mut self, name: &str, sname: &str, len: Option<&Expr>, pos: Pos) -> R<Allocation> {
+        let Some(fields) = self.structs.get(sname).cloned() else {
+            return self.err(pos, format!("unknown struct `{sname}`"));
+        };
+        let mut syms = Vec::new();
+        let mut start = None;
+        let mut total = 0u16;
+        for (fname, fty) in &fields {
+            let (sym, addr, size) = match len {
+                None => {
+                    let size = if *fty == Type::U16 { 2 } else { 1 };
+                    let addr = self.alloc(size, false, pos)?;
+                    (Sym::Var { addr, ty: *fty }, addr, size)
+                }
+                Some(len) => self.alloc_array(*fty, len, pos)?,
+            };
+            start.get_or_insert(addr);
+            total += size;
+            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size });
+            syms.push((format!("{name}.{fname}"), sym));
+        }
+        let marker = match len {
+            None => Sym::Struct(sname.to_string()),
+            Some(_) => Sym::StructArray(sname.to_string()),
+        };
+        syms.push((name.to_string(), marker));
+        Ok((syms, start.unwrap(), total))
+    }
+
     fn const_expr(&self, e: &Expr, what: &str) -> R<i64> {
         self.const_val(e).ok_or_else(|| Diagnostic::new(e.pos, format!("{what} must be a constant expression")))
     }
@@ -209,22 +286,42 @@ impl Codegen {
                 let v = self.const_expr(value, "constant value")?;
                 self.globals.insert(name.clone(), Sym::Const(v));
             }
-            Decl::Data { name, elems, pos } => {
+            Decl::Data { name, elem, elems, pos } => {
                 self.define(name, *pos)?;
-                let mut bytes = Vec::with_capacity(elems.len());
-                for el in elems {
-                    bytes.push(fit(self.const_expr(el, "array element")?, Type::U8, el.pos)? as u8);
+                let max = if *elem == Type::U16 { 256 } else { 0xFFFF };
+                if elems.is_empty() || elems.len() > max {
+                    return self.err(*pos, format!("constant {elem} array must have between 1 and {max} elements"));
                 }
-                if bytes.is_empty() || bytes.len() > 0xFFFF {
-                    return self.err(*pos, "constant array must have between 1 and 65535 elements");
+                // u16 tables are split into a low-byte table followed by a high-byte table.
+                let mut lo = Vec::with_capacity(elems.len());
+                let mut hi = Vec::new();
+                for el in elems {
+                    let v = fit(self.const_expr(el, "array element")?, *elem, el.pos)?;
+                    lo.push(v as u8);
+                    hi.push((v >> 8) as u8);
+                }
+                if *elem == Type::U16 {
+                    lo.extend(hi);
                 }
                 let label = format!("d_{name}");
-                self.globals.insert(name.clone(), Sym::Data { label: label.clone(), len: bytes.len() as u16 });
-                self.data.push((label, bytes));
+                self.globals.insert(name.clone(), Sym::Data { label: label.clone(), len: elems.len() as u16, elem: *elem });
+                self.data.push((label, lo));
             }
+            Decl::Struct { .. } => {}
             Decl::Var { name, ty, init, pos } => {
                 self.define(name, *pos)?;
                 match ty {
+                    VarType::Struct(sname) | VarType::StructArray(sname, _) => {
+                        if init.is_some() {
+                            return self.err(*pos, "struct variables cannot have an initializer (they start zeroed)");
+                        }
+                        let len = match ty {
+                            VarType::StructArray(_, len) => Some(len),
+                            _ => None,
+                        };
+                        let (syms, _, _) = self.alloc_struct(name, sname, len, *pos)?;
+                        self.globals.extend(syms);
+                    }
                     VarType::Scalar(t) => {
                         let size = if *t == Type::U16 { 2 } else { 1 };
                         let addr = self.alloc(size, true, *pos)?;
@@ -237,17 +334,13 @@ impl Codegen {
                         self.globals.insert(name.clone(), Sym::Var { addr, ty: *t });
                         self.vars.insert(name.clone(), VarInfo { addr, size });
                     }
-                    VarType::Array(len) => {
-                        let n = self.const_expr(len, "array length")?;
-                        if !(1..=256).contains(&n) {
-                            return self.err(len.pos, "array length must be between 1 and 256");
-                        }
+                    VarType::Array(elem, len) => {
                         if init.is_some() {
                             return self.err(*pos, "RAM arrays cannot have an initializer (they start zeroed)");
                         }
-                        let addr = self.alloc(n as u16, false, *pos)?;
-                        self.globals.insert(name.clone(), Sym::Array { addr, len: n as u16 });
-                        self.vars.insert(name.clone(), VarInfo { addr, size: n as u16 });
+                        let (sym, addr, size) = self.alloc_array(*elem, len, *pos)?;
+                        self.globals.insert(name.clone(), sym);
+                        self.vars.insert(name.clone(), VarInfo { addr, size });
                     }
                 }
             }
@@ -315,6 +408,12 @@ impl Codegen {
                         calls(body, out);
                     }
                     Stmt::Return(Some(e), _) | Stmt::Expr(e) => ex(e, out),
+                    Stmt::Match { value, arms, .. } => {
+                        ex(value, out);
+                        for arm in arms {
+                            calls(&arm.body, out);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -431,6 +530,14 @@ impl Codegen {
     }
 
     fn unknown_var(&self, name: &str, pos: Pos) -> Diagnostic {
+        if let Some(dot) = name.find('.') {
+            let base = &name[..dot];
+            let field = &name[dot + 1..];
+            if let Some(Sym::Struct(sname) | Sym::StructArray(sname)) = self.lookup(base) {
+                return Diagnostic::new(pos, format!("no field `{field}` in struct `{sname}`"));
+            }
+            return Diagnostic::new(pos, format!("`{base}` is not a struct or struct array"));
+        }
         Diagnostic::new(pos, format!("unknown variable `{name}`"))
     }
 
@@ -460,15 +567,17 @@ impl Codegen {
                 Some(Sym::Array { .. }) | Some(Sym::Data { .. }) => {
                     self.err(e.pos, format!("`{name}` is an array; use `{name}[i]` to read an element"))
                 }
+                Some(Sym::Struct(_)) => self.err(e.pos, format!("`{name}` is a struct; access a field with `{name}.field`")),
+                Some(Sym::StructArray(_)) => self.err(e.pos, format!("`{name}` is a struct array; access a field with `{name}[i].field`")),
                 Some(Sym::Const(_)) => unreachable!(),
                 None => Err(self.unknown_var(name, e.pos)),
             },
             ExprKind::Index(name, idx) => {
-                self.array_base(name, e.pos)?;
+                let (_, _, elem) = self.array_base(name, e.pos)?;
                 if self.ty(idx)? != Type::U8 {
                     return self.err(idx.pos, "array index must be u8");
                 }
-                Ok(Type::U8)
+                Ok(elem)
             }
             ExprKind::Call(name, _) => match self.call_ret(name, e.pos)? {
                 Some(t) => Ok(t),
@@ -483,8 +592,16 @@ impl Codegen {
                 let (a, b) = (self.ty(l)?, self.ty(r)?);
                 if op.is_comparison() || matches!(op, BinOp::LogAnd | BinOp::LogOr) {
                     Ok(Type::U8)
+                } else if a == Type::U16 || b == Type::U16 {
+                    Ok(Type::U16)
+                } else if matches!(op, BinOp::Shl | BinOp::Shr) {
+                    Ok(a)
+                } else if (a == Type::I8 && (b == Type::I8 || self.const_val(r).is_some()))
+                    || (b == Type::I8 && self.const_val(l).is_some())
+                {
+                    Ok(Type::I8)
                 } else {
-                    Ok(max_ty(a, b))
+                    Ok(Type::U8)
                 }
             }
             ExprKind::Cast(x, t) => {
@@ -496,16 +613,16 @@ impl Codegen {
 
     /// Checks that `e` can be stored into a `want`-typed location.
     pub(crate) fn check_fits(&self, e: &Expr, want: Type) -> R<()> {
-        if want == Type::U8 && self.ty(e)? == Type::U16 {
-            return self.err(e.pos, "mismatched types: expected u8, found u16 (use `as u8` to truncate)");
+        if want != Type::U16 && self.ty(e)? == Type::U16 {
+            return self.err(e.pos, format!("mismatched types: expected {want}, found u16 (use `as {want}` to truncate)"));
         }
         Ok(())
     }
 
-    fn array_base(&self, name: &str, pos: Pos) -> R<(Val, u16)> {
+    fn array_base(&self, name: &str, pos: Pos) -> R<(Val, u16, Type)> {
         match self.lookup(name) {
-            Some(Sym::Array { addr, len }) => Ok((Val::Num(addr), len)),
-            Some(Sym::Data { label, len }) => Ok((Val::Label(label, 0), len)),
+            Some(Sym::Array { addr, len, elem }) => Ok((Val::Num(addr), len, elem)),
+            Some(Sym::Data { label, len, elem }) => Ok((Val::Label(label.clone(), 0), len, elem)),
             Some(_) => self.err(pos, format!("`{name}` is not an array")),
             None => Err(self.unknown_var(name, pos)),
         }
@@ -520,7 +637,7 @@ impl Codegen {
 
     fn const_index(&self, name: &str, idx: &Expr, pos: Pos) -> R<Option<Val>> {
         let Some(i) = self.const_val(idx) else { return Ok(None) };
-        let (base, len) = self.array_base(name, pos)?;
+        let (base, len, _) = self.array_base(name, pos)?;
         if i < 0 || i >= len as i64 {
             return self.err(idx.pos, format!("index {i} is out of bounds for `{name}` (length {len})"));
         }
@@ -534,10 +651,12 @@ impl Codegen {
         }
         Ok(match &e.kind {
             ExprKind::Var(name) => match self.lookup(name) {
-                Some(Sym::Var { addr, ty: Type::U8 }) => Some(Operand::abs(addr)),
+                Some(Sym::Var { addr, ty: Type::U8 | Type::I8 }) => Some(Operand::abs(addr)),
                 _ => None,
             },
-            ExprKind::Index(name, idx) => self.const_index(name, idx, e.pos)?.map(Operand::Abs),
+            ExprKind::Index(name, idx) if self.array_base(name, e.pos)?.2 != Type::U16 => {
+                self.const_index(name, idx, e.pos)?.map(Operand::Abs)
+            }
             _ => None,
         })
     }
@@ -553,14 +672,26 @@ impl Codegen {
                 return Ok(Some((Operand::abs(addr), Operand::abs(addr + 1))));
             }
         }
+        if self.ty(e)? == Type::I8 {
+            return Ok(None);
+        }
         Ok(self.operand8(e)?.map(|o| (o, Operand::imm(0))))
     }
 
     // ------------------------------------------------------------------ expressions
 
+    /// Extends an 8-bit value in A to A:X when `want` is u16 (sign-extending i8).
     fn widen(&mut self, from: Type, want: Type) {
-        if from == Type::U8 && want == Type::U16 {
-            self.e.imm(LDX, 0);
+        if from == Type::U16 || want != Type::U16 {
+            return;
+        }
+        self.e.imm(LDX, 0);
+        if from == Type::I8 {
+            let pos = self.e.new_label();
+            self.e.imm(CMP, 0x80);
+            self.e.br(BCC, &pos);
+            self.e.imp(DEX);
+            self.e.label(&pos);
         }
     }
 
@@ -582,7 +713,7 @@ impl Codegen {
             return Ok(());
         }
         let nat = self.ty(e)?;
-        if nat == Type::U16 && want == Type::U8 {
+        if nat == Type::U16 && want != Type::U16 {
             return self.check_fits(e, want);
         }
         match &e.kind {
@@ -597,7 +728,7 @@ impl Codegen {
             }
             ExprKind::Index(name, idx) => {
                 self.index(name, idx, e.pos)?;
-                self.widen(Type::U8, want);
+                self.widen(nat, want);
             }
             ExprKind::Call(name, args) => {
                 let ret = self.call(name, args, e.pos)?;
@@ -633,12 +764,19 @@ impl Codegen {
                     self.e.imp(TYA);
                 }
             }
-            ExprKind::Binary(op, l, r) => self.arith(*op, l, r, want)?,
+            ExprKind::Binary(op, l, r) => {
+                // Operate at the target width when widening, otherwise at the natural
+                // type so i8 keeps arithmetic shifts.
+                let width = if want == Type::U16 { Type::U16 } else { nat };
+                self.arith(*op, l, r, width)?;
+            }
             ExprKind::Cast(x, t) => {
                 let inner = self.ty(x)?;
                 self.expr(x, inner)?;
-                if want == Type::U16 && (inner == Type::U8 || *t == Type::U8) {
-                    self.e.imm(LDX, 0);
+                if *t == Type::U16 {
+                    self.widen(inner, Type::U16);
+                } else {
+                    self.widen(*t, want);
                 }
             }
             ExprKind::Num(_) | ExprKind::Str(_) => unreachable!("handled by const_val / ty"),
@@ -646,13 +784,25 @@ impl Codegen {
         Ok(())
     }
 
-    /// Loads `name[idx]` into A.
+    /// Loads `name[idx]` into A (8-bit elements) or A:X (u16 elements).
     fn index(&mut self, name: &str, idx: &Expr, pos: Pos) -> R<()> {
+        let (base, len, elem) = self.array_base(name, pos)?;
+        let hi = Self::offset(&base, len);
         if let Some(v) = self.const_index(name, idx, pos)? {
-            self.e.ins(LDA, Operand::Abs(v));
+            self.e.ins(LDA, Operand::Abs(v.clone()));
+            if elem == Type::U16 {
+                self.e.ins(LDX, Operand::Abs(Self::offset(&v, len)));
+            }
             return Ok(());
         }
-        let (base, _) = self.array_base(name, pos)?;
+        if elem == Type::U16 {
+            self.index_to_x(idx)?;
+            self.e.imp(TXA);
+            self.e.imp(TAY);
+            self.e.ins(LDA, Operand::AbsY(base));
+            self.e.ins(LDX, Operand::AbsY(hi));
+            return Ok(());
+        }
         self.index_to_x(idx)?;
         self.e.ins(LDA, Operand::AbsX(base));
         Ok(())
@@ -675,8 +825,14 @@ impl Codegen {
     fn arith(&mut self, op: BinOp, l: &Expr, r: &Expr, want: Type) -> R<()> {
         use BinOp::*;
         let pow2 = self.const_val(r).filter(|v| *v > 0 && v & (v - 1) == 0).map(|v| v.trailing_zeros());
+        if want == Type::I8 && matches!(op, Div | Mod) || want == Type::I8 && op == Mul && pow2.is_none() {
+            return self.err(
+                l.pos,
+                format!("`{}` is not supported for i8 values (only `*` by a power of 2)", op.symbol()),
+            );
+        }
         match (op, want) {
-            (Add | Sub | And | Or | Xor, Type::U8) => {
+            (Add | Sub | And | Or | Xor, Type::U8 | Type::I8) => {
                 let opc = match op { Add => ADC, Sub => SBC, And => AND, Or => ORA, _ => EOR };
                 let rhs = match self.operand8(r)? {
                     Some(o) => {
@@ -788,14 +944,21 @@ impl Codegen {
 
     fn shift_const(&mut self, left: bool, n: i64, ty: Type) {
         let bits = if ty == Type::U16 { 16 } else { 8 };
-        if n >= bits {
+        if n >= bits && !(ty == Type::I8 && !left) {
             self.e.imm(LDA, 0);
             if ty == Type::U16 {
                 self.e.imm(LDX, 0);
             }
             return;
         }
-        if ty == Type::U8 {
+        if ty == Type::I8 && !left {
+            for _ in 0..n.min(7) {
+                self.e.imm(CMP, 0x80);
+                self.e.acc(ROR);
+            }
+            return;
+        }
+        if ty != Type::U16 {
             for _ in 0..n {
                 self.e.acc(if left { ASL } else { LSR });
             }
@@ -838,8 +1001,12 @@ impl Codegen {
         self.e.imp(DEY);
         self.e.br(BEQ, &done);
         match (left, ty) {
-            (true, Type::U8) => self.e.acc(ASL),
+            (true, Type::U8 | Type::I8) => self.e.acc(ASL),
             (false, Type::U8) => self.e.acc(LSR),
+            (false, Type::I8) => {
+                self.e.imm(CMP, 0x80);
+                self.e.acc(ROR);
+            }
             (true, Type::U16) => {
                 self.e.acc(ASL);
                 self.e.abs(ROL, TMP1);
@@ -903,7 +1070,19 @@ impl Codegen {
     /// Jumps to `label` if `l op r` holds.
     fn compare(&mut self, op: BinOp, l: &Expr, r: &Expr, label: &str) -> R<()> {
         use BinOp::*;
-        let t = max_ty(self.ty(l)?, self.ty(r)?);
+        let (a, b) = (self.ty(l)?, self.ty(r)?);
+        let (lc, rc) = (self.const_val(l).is_some(), self.const_val(r).is_some());
+        if (a == Type::I8 && (b == Type::I8 || rc)) || (b == Type::I8 && lc) {
+            return self.compare_signed(op, l, r, label);
+        }
+        if (a == Type::I8) != (b == Type::I8) && !lc && !rc {
+            let (s, u) = if a == Type::I8 { (a, b) } else { (b, a) };
+            return self.err(
+                l.pos,
+                format!("mismatched types: cannot compare {s} with {u} (convert one side with `as`)"),
+            );
+        }
+        let t = max_ty(a, b);
         if t == Type::U8 {
             match self.operand8(r)? {
                 Some(o) => {
@@ -988,6 +1167,41 @@ impl Codegen {
             }
             _ => unreachable!(),
         }
+        Ok(())
+    }
+
+    /// Signed 8-bit comparison: after `SEC; SBC r` the true sign of l - r is N ^ V.
+    fn compare_signed(&mut self, op: BinOp, l: &Expr, r: &Expr, label: &str) -> R<()> {
+        use BinOp::*;
+        // l > r  <=>  r < l,  l <= r  <=>  r >= l
+        let (l, r) = if matches!(op, Gt | Le) { (r, l) } else { (l, r) };
+        let rhs = match self.operand8(r)? {
+            Some(o) => {
+                self.expr(l, Type::I8)?;
+                o
+            }
+            None => {
+                self.expr(l, Type::I8)?;
+                self.e.imp(PHA);
+                self.expr(r, Type::I8)?;
+                self.e.abs(STA, TMP0);
+                self.e.imp(PLA);
+                Operand::abs(TMP0)
+            }
+        };
+        if matches!(op, Eq | Ne) {
+            self.e.ins(CMP, rhs);
+            self.e.br(if op == Eq { BEQ } else { BNE }, label);
+            return Ok(());
+        }
+        let no_overflow = self.e.new_label();
+        self.e.imp(SEC);
+        self.e.ins(SBC, rhs);
+        self.e.br(BVC, &no_overflow);
+        self.e.imm(EOR, 0x80);
+        self.e.label(&no_overflow);
+        // N is now set exactly when (the possibly swapped) l < r.
+        self.e.br(if matches!(op, Lt | Gt) { BMI } else { BPL }, label);
         Ok(())
     }
 
@@ -1105,21 +1319,27 @@ impl Codegen {
                 let addr = match self.lookup(name) {
                     Some(Sym::Array { addr, .. }) => addr,
                     Some(Sym::Data { .. }) => return self.err(*ipos, format!("cannot assign to constant array `{name}`")),
+                    Some(Sym::StructArray(_)) => {
+                        return self.err(*ipos, format!("`{name}` is a struct array; access a field with `{name}[i].field`"));
+                    }
                     Some(_) => return self.err(*ipos, format!("`{name}` is not an array")),
                     None => return Err(self.unknown_var(name, *ipos)),
                 };
+                let (_, len, ety) = self.array_base(name, *ipos)?;
                 let elem = Expr { kind: ExprKind::Index(name.clone(), Box::new(idx.clone())), pos: *ipos };
                 let full = self.compound(elem, *op, value);
-                self.check_fits(&full, Type::U8)?;
-                if let Some(Val::Num(a)) = self.const_index(name, idx, *ipos)? {
-                    self.expr(&full, Type::U8)?;
+                self.check_fits(&full, ety)?;
+                if ety == Type::U16 {
+                    self.store_u16_elem(addr, len, idx, &full)?;
+                } else if let Some(Val::Num(a)) = self.const_index(name, idx, *ipos)? {
+                    self.expr(&full, ety)?;
                     self.e.abs(STA, a);
                 } else if self.operand8(idx)?.is_some() {
-                    self.expr(&full, Type::U8)?;
+                    self.expr(&full, ety)?;
                     self.index_to_x(idx)?;
                     self.e.ins(STA, Operand::abs_x(addr));
                 } else {
-                    self.expr(&full, Type::U8)?;
+                    self.expr(&full, ety)?;
                     self.e.imp(PHA);
                     self.index_to_x(idx)?;
                     self.e.imp(PLA);
@@ -1188,6 +1408,25 @@ impl Codegen {
                 }
                 self.e.imp(RTS);
             }
+            Stmt::LetZeroed { name, ty, pos } => {
+                let (syms, addr, size) = match ty {
+                    VarType::Array(elem, len) => {
+                        let (sym, addr, size) = self.alloc_array(*elem, len, *pos)?;
+                        (vec![(name.clone(), sym)], addr, size)
+                    }
+                    VarType::Struct(sname) => self.alloc_struct(name, sname, None, *pos)?,
+                    VarType::StructArray(sname, len) => self.alloc_struct(name, sname, Some(len), *pos)?,
+                    VarType::Scalar(_) => unreachable!("parser requires an initializer"),
+                };
+                self.zero_fill(addr, size);
+                self.scopes.last_mut().unwrap().extend(syms);
+            }
+            Stmt::Match { value, arms, pos } => {
+                self.scopes.push(HashMap::new());
+                let r = self.match_stmt(value, arms, *pos);
+                self.scopes.pop();
+                r?;
+            }
             Stmt::Expr(e) => {
                 if let ExprKind::Call(name, args) = &e.kind {
                     self.call(name, args, e.pos)?;
@@ -1198,6 +1437,95 @@ impl Codegen {
             }
         }
         Ok(())
+    }
+
+    /// Lowers `match` to a hidden local holding the scrutinee and one condition per arm.
+    fn match_stmt(&mut self, value: &Expr, arms: &[MatchArm], pos: Pos) -> R<()> {
+        let ty = self.ty(value)?;
+        let hidden = format!("$match{}", self.e.new_label());
+        self.expr(value, ty)?;
+        let addr = self.declare_local(&hidden, ty, pos)?;
+        self.store(addr, ty);
+        let var = Expr { kind: ExprKind::Var(hidden), pos };
+        let end = self.e.new_label();
+        for arm in arms {
+            let mut cond: Option<Expr> = None;
+            for pat in &arm.pats {
+                let test = match pat {
+                    Pattern::Wild => Expr { kind: ExprKind::Num(1), pos: arm.pos },
+                    Pattern::Value(v) => {
+                        self.const_expr(v, "match pattern")?;
+                        Expr { kind: ExprKind::Binary(BinOp::Eq, Box::new(var.clone()), Box::new(v.clone())), pos: v.pos }
+                    }
+                    Pattern::Range(lo, hi) => {
+                        if self.const_expr(lo, "match pattern")? > self.const_expr(hi, "match pattern")? {
+                            return self.err(lo.pos, "empty range pattern: the start is greater than the end");
+                        }
+                        let ge = Expr { kind: ExprKind::Binary(BinOp::Ge, Box::new(var.clone()), Box::new(lo.clone())), pos: lo.pos };
+                        let le = Expr { kind: ExprKind::Binary(BinOp::Le, Box::new(var.clone()), Box::new(hi.clone())), pos: hi.pos };
+                        Expr { kind: ExprKind::Binary(BinOp::LogAnd, Box::new(ge), Box::new(le)), pos: lo.pos }
+                    }
+                };
+                cond = Some(match cond {
+                    None => test,
+                    Some(c) => Expr { pos: c.pos, kind: ExprKind::Binary(BinOp::LogOr, Box::new(c), Box::new(test)) },
+                });
+            }
+            let next = self.e.new_label();
+            self.cond(cond.as_ref().expect("arm has a pattern"), &next, false)?;
+            self.block(&arm.body);
+            self.e.jmp(&end);
+            self.e.label(&next);
+        }
+        self.e.label(&end);
+        Ok(())
+    }
+
+    /// `arr[idx] = value` for u16 arrays (low table at `addr`, high table at `addr + len`).
+    fn store_u16_elem(&mut self, addr: u16, len: u16, idx: &Expr, value: &Expr) -> R<()> {
+        if let Some(i) = self.const_val(idx) {
+            if i < 0 || i >= len as i64 {
+                return self.err(idx.pos, format!("index {i} is out of bounds (length {len})"));
+            }
+            self.expr(value, Type::U16)?;
+            self.store(addr + i as u16, Type::U8);
+            self.e.abs(STX, addr + len + i as u16);
+            return Ok(());
+        }
+        self.expr(value, Type::U16)?;
+        self.e.imp(PHA);
+        self.e.imp(TXA);
+        self.e.imp(PHA);
+        self.index_to_x(idx)?;
+        self.e.imp(TXA);
+        self.e.imp(TAY);
+        self.e.imp(PLA);
+        self.e.ins(STA, Operand::abs_y(addr + len));
+        self.e.imp(PLA);
+        self.e.ins(STA, Operand::abs_y(addr));
+        Ok(())
+    }
+
+    /// Emits code clearing `size` bytes at `addr`.
+    fn zero_fill(&mut self, addr: u16, size: u16) {
+        self.e.imm(LDA, 0);
+        if size <= 4 {
+            for i in 0..size {
+                self.e.abs(STA, addr + i);
+            }
+            return;
+        }
+        let mut off = 0;
+        while off < size {
+            let n = (size - off).min(255);
+            let top = self.e.new_label();
+            self.e.imm(LDX, n as u8);
+            self.e.label(&top);
+            self.e.ins(STA, Operand::abs_x(addr + off - 1));
+            self.e.imp(DEX);
+            self.e.br(BNE, &top);
+            off += n;
+        }
     }
 
     fn compound(&self, target: Expr, op: Option<BinOp>, value: &Expr) -> Expr {

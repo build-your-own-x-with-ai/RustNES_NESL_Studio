@@ -11,6 +11,7 @@ pub struct Pos {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
     U8,
+    I8,
     U16,
 }
 
@@ -18,6 +19,7 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(match self {
             Type::U8 => "u8",
+            Type::I8 => "i8",
             Type::U16 => "u16",
         })
     }
@@ -26,8 +28,12 @@ impl fmt::Display for Type {
 #[derive(Clone, Debug, PartialEq)]
 pub enum VarType {
     Scalar(Type),
-    /// `[u8; N]` — RAM byte array.
-    Array(Expr),
+    /// `[T; N]` — RAM array.
+    Array(Type, Expr),
+    /// A variable of a user-defined struct type.
+    Struct(String),
+    /// `[S; N]` — array of structs (stored as one array per field).
+    StructArray(String, Expr),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,8 +44,9 @@ pub struct Program {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Decl {
     Const { name: String, value: Expr, pos: Pos },
-    /// `const NAME: [u8] = [...]` or `= "text"` — read-only bytes in ROM.
-    Data { name: String, elems: Vec<Expr>, pos: Pos },
+    /// `const NAME: [T] = [...]` or `= "text"` — read-only table in ROM.
+    Data { name: String, elem: Type, elems: Vec<Expr>, pos: Pos },
+    Struct { name: String, fields: Vec<(String, Type)>, pos: Pos },
     Var { name: String, ty: VarType, init: Option<Expr>, pos: Pos },
     Tile { index: Expr, rows: Vec<(String, Pos)>, pos: Pos },
     Fn(Function),
@@ -65,6 +72,9 @@ pub enum Place {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stmt {
     Let { name: String, ty: Option<Type>, init: Expr, pos: Pos },
+    /// `let buf: [u8; 8];` / `let e: Enemy;` — zero-filled each time it executes.
+    LetZeroed { name: String, ty: VarType, pos: Pos },
+    Match { value: Expr, arms: Vec<MatchArm>, pos: Pos },
     Assign { target: Place, op: Option<BinOp>, value: Expr, pos: Pos },
     If { cond: Expr, then: Block, els: Option<Block>, pos: Pos },
     While { cond: Expr, body: Block, pos: Pos },
@@ -74,6 +84,21 @@ pub enum Stmt {
     Continue(Pos),
     Return(Option<Expr>, Pos),
     Expr(Expr),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MatchArm {
+    pub pats: Vec<Pattern>,
+    pub body: Block,
+    pub pos: Pos,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pattern {
+    Value(Expr),
+    /// `a..=b`
+    Range(Expr, Expr),
+    Wild,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -83,6 +83,8 @@ f(x, y);                               // 表达式语句
 | `peek(addr: u16) -> u8` / `poke(addr: u16, v: u8)` | 直接读写 CPU 地址空间 |
 | `play_tone(period: u16)` / `stop_sound()` | 方波通道 1 播放/停止音调（period 为 11 位定时器值） |
 
+> v2（[002-language-extensions](../../002-language-extensions/contracts/language.md)）新增：`struct`、`i8`、`[u16; N]` / `[i8; N]` 数组与常量表、局部数组、`match`。
+
 ## 限制（v1）
 - 不支持递归、指针、结构体、有符号数、u16 数组、u16 乘除。
 - 数组下标为 u8，数组长度 ≤ 256。

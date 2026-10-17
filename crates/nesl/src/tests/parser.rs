@@ -57,7 +57,7 @@ fn top_level_declarations() {
     assert!(matches!(&p.items[2], Decl::Data { elems, .. } if elems.len() == 2));
     assert!(matches!(&p.items[3], Decl::Var { ty: VarType::Scalar(Type::U8), init: Some(_), .. }));
     assert!(matches!(&p.items[4], Decl::Var { ty: VarType::Scalar(Type::U16), init: None, .. }));
-    assert!(matches!(&p.items[5], Decl::Var { ty: VarType::Array(_), .. }));
+    assert!(matches!(&p.items[5], Decl::Var { ty: VarType::Array(Type::U8, _), .. }));
     assert!(matches!(&p.items[6], Decl::Tile { rows, .. } if rows.len() == 8));
     match &p.items[7] {
         Decl::Fn(f) => {

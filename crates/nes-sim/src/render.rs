@@ -80,6 +80,13 @@ fn sprite_pixel(bus: &NesBus, ctrl: u8, x: usize, y: usize) -> Option<(u8, u8, b
     None
 }
 
+/// Fine horizontal scroll (0-7) used on each line of frame `k`.
+pub fn line_fine_x(bus: &NesBus, k: u64) -> Vec<u8> {
+    use crate::nes::{CYCLES_PER_FRAME, VBLANK_CYCLES};
+    let start = k * CYCLES_PER_FRAME + VBLANK_CYCLES;
+    (0..HEIGHT).map(|y| regs_at(&bus.reg_log, start + (341 * y as u64 + 257) / 3).sx & 7).collect()
+}
+
 /// Renders frame `k` (0-based, counted from power-on) using the current VRAM/OAM.
 pub fn frame(bus: &NesBus, k: u64) -> Vec<u8> {
     use crate::nes::{CYCLES_PER_FRAME, VBLANK_CYCLES};

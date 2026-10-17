@@ -18,8 +18,8 @@ description: "Task list for music and custom sound effects"
 
 ## Phase 3: US1 旋律 (P1) 🎯 MVP
 
-- [ ] T503 [US1] 测试：MML 编码逐字节（音符、长度、附点、连音、升降、八度、速度、拆分、错误列号）`crates/nesl/src/mml.rs`
-- [ ] T504 [US1] 实现：`mml::compile`
+- [x] T503 [US1] 测试：MML 编码逐字节（音符、长度、附点、连音、升降、八度、速度、拆分、错误列号）`crates/nesl/src/mml.rs`
+- [x] T504 [US1] 实现：`mml::compile`
 - [ ] T505 [US1] 测试：端到端帧级时序、A4 周期、循环不漂移、stop_music `crates/nesl/tests/music.rs`
 - [ ] T506 [US1] 实现：周期表、`__music_tick`、`play_music`、`stop_music`、零页 `NMI_PTR`
 

@@ -16,6 +16,7 @@ pub fn pixel_cycle(x: u8, y: u8) -> u64 {
     VBLANK_CYCLES + (341 * (1 + y as u64) + x as u64) / 3
 }
 
+#[derive(Clone)]
 pub struct NesBus {
     pub ram: [u8; 0x800],
     pub prg: Vec<u8>,

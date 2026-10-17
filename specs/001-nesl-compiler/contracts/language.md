@@ -74,7 +74,7 @@ f(x, y);                               // 表达式语句
 | `vram_fill(v: u8, n: u16)` | 从当前地址连续写 n 个 v |
 | `print(x: u8, y: u8, text)` | 在背景第 y 行第 x 列写文字；text 为字符串字面量或常量数组 |
 | `print_u8(x: u8, y: u8, v: u8)` | 以 3 位十进制显示数字 |
-| `sprite(i, x, y, tile, attr)` | 设置第 i 号精灵（0-63），下一帧生效 |
+| `sprite(i, x, y, tile, attr)` | 设置第 i 号精灵（0-63），左上角恰好出现在 (x, y)，下一帧生效；y = 0 无法显示（硬件限制） |
 | `hide_sprite(i)` | 隐藏第 i 号精灵 |
 | `joypad(port) -> u8` | 读取手柄（port 0/1），按位与 `BTN_*` 判断 |
 | `scroll(x: u8, y: u8)` | 设置背景滚动 |

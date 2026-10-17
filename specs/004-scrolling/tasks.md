@@ -28,8 +28,8 @@ description: "Task list for horizontal scrolling"
 
 ## Phase 5: US3 调色板分区 (P2)
 
-- [ ] T407 [US3] 测试：属性字节打包、卷轴补画属性、错误
-- [ ] T408 [US3] 实现：分区 → 属性表数据
+- [x] T407 [US3] 测试：属性字节打包、卷轴补画属性、错误
+- [x] T408 [US3] 实现：分区 → 属性表数据
 
 ## Phase 6: US4 示例与收尾 (P2)
 

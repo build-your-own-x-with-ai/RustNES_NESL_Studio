@@ -151,3 +151,37 @@ fn narrow_maps_never_scroll() {
     let r = run(&format!("{} var c: u16; fn main() {{ draw_map(W); camera_follow(250, W); c = camera_x(); }}", wide_map("W", 32)));
     assert_eq!(r.u16("c"), 0);
 }
+
+// ---------------------------------------------------------------- US3 palette zones
+
+#[test]
+fn palette_zone_packs_attribute_bytes() {
+    let r = run(&format!("{} palette_zone W = [\"01\", \"23\", \"\", \"3.\"];
+        fn main() {{ draw_map(W); }}", wide_map("W", 32)));
+    assert_eq!(r.vram(0x23C0, 1), vec![0b11_10_01_00]);
+    assert_eq!(r.vram(0x23C8, 1), vec![0b00_11_00_00], "zone row 3 `3.` is the bottom-left of block row 1");
+    assert!(r.vram(0x23C1, 7).iter().all(|b| *b == 0));
+}
+
+#[test]
+fn scrolling_streams_attributes_of_later_screens() {
+    let mut zone_rows = vec![String::new(); 15];
+    zone_rows[0] = format!("{}{}", "0".repeat(32), "2".repeat(32)); // areas 32-63 = columns 64-127
+    let zones = zone_rows.iter().map(|z| format!("\"{z}\"")).collect::<Vec<_>>().join(",");
+    let src = format!("{} palette_zone W = [{zones}];
+        fn main() {{ draw_map(W); ppu_on(); loop {{ wait_vblank(); camera_follow(1000, W); }} }}", wide_map("W", 128));
+    let r = run_frames(&src, 120, |_| {});
+    // Camera ended at 768: columns 96-127 are in ring slots 32-63 (second nametable), groups 24-31.
+    assert_eq!(r.vram(0x27C0, 8), vec![0b1010; 8], "top block row of every group has palette 2 on top");
+    assert_eq!(r.nes.bus.render_conflicts, 0);
+}
+
+#[test]
+fn palette_zone_errors() {
+    let m = |src: &str| errors(src)[0].message.clone();
+    let map = wide_map("W", 32);
+    assert!(m(&format!("{map} palette_zone W = [\"0124\"]; fn main() {{}}")).contains("invalid palette"));
+    assert!(m(&format!("{map} palette_zone W = [\"{}\"]; fn main() {{}}", "0".repeat(17))).contains("wider"));
+    assert!(m(&format!("{map} palette_zone W = [{}]; fn main() {{}}", vec!["\"0\""; 16].join(","))).contains("15"));
+    assert!(m("palette_zone Q = [\"0\"]; fn main() {}").contains("does not name a map"));
+}

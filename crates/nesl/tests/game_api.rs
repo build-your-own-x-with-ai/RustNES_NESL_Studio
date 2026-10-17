@@ -85,3 +85,54 @@ fn bundled_examples_never_write_vram_while_rendering() {
         assert_eq!(conflicts(&r), 0, "{name}");
     }
 }
+
+// ---------------------------------------------------------------- US2 map
+
+const LEVEL: &str = "map L = [
+    \"################################\",
+    \"#..............................#\",
+    \"#....@.........*\",
+    \"####\",
+];";
+
+#[test]
+fn draw_map_fills_the_nametable_and_clears_attributes() {
+    let r = run(&format!("{LEVEL} fn main() {{ vram_addr(0x23C0); vram_fill(0xFF, 64); draw_map(L); }}"));
+    let nt = r.vram(0x2000, 960);
+    assert_eq!(&nt[..32], &[b'#'; 32]);
+    assert_eq!(nt[32], b'#');
+    assert_eq!(nt[33], b' ', "`.` is drawn as a space");
+    assert_eq!(nt[64 + 5], b'@');
+    assert_eq!(nt[64 + 15], b'*');
+    assert_eq!(nt[64 + 16], b' ', "short rows are padded");
+    assert_eq!(&nt[96..100], b"####");
+    assert!(nt[128..].iter().all(|b| *b == b' '), "missing rows are blank");
+    assert!(r.vram(0x23C0, 64).iter().all(|b| *b == 0));
+}
+
+#[test]
+fn draw_map_while_rendering_does_not_glitch() {
+    let r = run_frames(&format!("{LEVEL} var done: u8;
+        fn main() {{ ppu_on(); wait_vblank(); draw_map(L); done = 1; loop {{ wait_vblank(); }} }}"), 10, |_| {});
+    assert_eq!(r.u8("done"), 1);
+    assert_eq!(r.nes.bus.render_conflicts, 0);
+    assert_eq!(r.nes.bus.ppumask, 0x1E, "rendering is turned back on");
+    assert_eq!(r.vram(0x2000 + 64 + 5, 1), b"@".to_vec());
+}
+
+#[test]
+fn map_tile_reads_cells_and_returns_zero_out_of_bounds() {
+    let r = run(&format!("{LEVEL} var a: u8; var b: u8; var c: u8; var d: u8; var e: u8; var x: u8 = 5;
+        fn main() {{ a = map_tile(L, x, 2); b = map_tile(L, 1, 1); c = map_tile(L, 32, 0); d = map_tile(L, 0, 30); e = map_tile(L, 31, 29); }}"));
+    assert_eq!((r.u8("a"), r.u8("b"), r.u8("c"), r.u8("d"), r.u8("e")), (b'@', b' ', 0, 0, b' '));
+}
+
+#[test]
+fn map_errors() {
+    let m = |src: &str| errors(src)[0].message.clone();
+    let long_row = format!("map M = [\"{}\"]; fn main() {{}}", "#".repeat(33));
+    assert!(m(&long_row).contains("32"));
+    let many_rows = format!("map M = [{}]; fn main() {{}}", vec!["\"#\""; 31].join(","));
+    assert!(m(&many_rows).contains("30"));
+    assert!(m("const P: [u8] = [1]; fn main() { draw_map(P); }").contains("map"));
+}

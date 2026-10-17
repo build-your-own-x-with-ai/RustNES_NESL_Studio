@@ -92,3 +92,32 @@ fn serves_over_tcp() {
     assert!(out.starts_with("HTTP/1.1 200 OK\r\n"), "{out}");
     assert!(out.contains("\"ok\":true"));
 }
+
+#[test]
+fn serves_the_studio_script() {
+    let r = handle(&req("GET", "/studio.js", ""));
+    assert_eq!(r.status, 200);
+    assert!(r.content_type.starts_with("text/javascript"));
+    assert!(String::from_utf8_lossy(&r.body).contains("Studio"));
+}
+
+#[test]
+fn builtins_endpoint_lists_documented_functions_constants_and_keywords() {
+    let r = handle(&req("GET", "/api/builtins", ""));
+    let body = String::from_utf8(r.body).unwrap();
+    assert!(r.content_type.starts_with("application/json"));
+    assert!(body.contains("{\"name\":\"sprite\",\"sig\":\"sprite(i, x, y, tile, attr)\",\"doc\":"), "{body}");
+    assert_eq!(body.matches("\"sig\":").count(), nesl::builtins::DOCS.len());
+    for c in ["\"BTN_A\"", "\"SFX_JUMP\"", "\"fn\"", "\"map\"", "\"palette_zone\"", "\"u16\""] {
+        assert!(body.contains(c), "missing {c}");
+    }
+}
+
+#[test]
+fn check_endpoint_reports_diagnostics_without_a_rom() {
+    let ok = String::from_utf8(handle(&req("POST", "/api/check", "fn main() {}")).body).unwrap();
+    assert_eq!(ok, "{\"ok\":true,\"errors\":[]}");
+    let bad = String::from_utf8(handle(&req("POST", "/api/check", "fn main() {\n  q = 1;\n}")).body).unwrap();
+    assert!(bad.contains("\"ok\":false") && bad.contains("{\"line\":2,\"col\":3,"), "{bad}");
+    assert!(!bad.contains("rom"));
+}

@@ -24,8 +24,8 @@ description: "Task list for editable maps and the status bar"
 
 ## Phase 4: US2 状态栏 (P2)
 
-- [ ] T606 [US2] 测试：分屏时序、补画跳过状态栏行、状态栏文字保留、关闭、超时不卡死、参数错误 `crates/nesl/tests/status_bar.rs`
-- [ ] T607 [US2] 实现：CHR 标记、`__status_bar`、NMI 分屏、补画/属性跳过行
+- [x] T606 [US2] 测试：分屏时序、补画跳过状态栏行、状态栏文字保留、关闭、超时不卡死、参数错误 `crates/nesl/tests/status_bar.rs`
+- [x] T607 [US2] 实现：CHR 标记、`__status_bar`、NMI 分屏、补画/属性跳过行
 
 ## Phase 5: US3 示例
 

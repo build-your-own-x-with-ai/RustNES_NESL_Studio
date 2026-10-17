@@ -83,6 +83,7 @@ pub fn signature(name: &str) -> Option<Signature> {
         "camera_follow" => sig!(U16, Map => None),
         "set_map_tile" => sig!(Map, U8, U8, U8 => U8),
         "reset_map" => sig!(Map => None),
+        "status_bar" => sig!(U8 => None),
         "camera_x" => sig!(=> Some(Type::U16)),
         "metasprite" => sig!(U8, U8, U8, Meta => U8),
         "collide" => sig!(U8, U8, U8, U8, U8, U8, U8, U8 => U8),
@@ -254,6 +255,16 @@ impl Codegen {
                 self.e.imm(LDA, id);
                 self.e.abs(STA, ARG4);
                 self.e.jsr("__set_map_tile");
+            }
+            "status_bar" => {
+                let Some(n) = self.const_val(&args[0]) else {
+                    return self.err(args[0].pos, "`status_bar` needs a constant number of rows (0 to turn it off, or 2 to 8)");
+                };
+                if n != 0 && !(2..=8).contains(&n) {
+                    return self.err(args[0].pos, format!("status bar rows must be 0 (off) or 2 to 8, found {n}"));
+                }
+                self.e.imm(LDA, n as u8);
+                self.e.jsr("__status_bar");
             }
             "reset_map" => {
                 let (_, _, id) = self.map_label(&args[0])?;
@@ -1194,6 +1205,137 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.label("__rm_done");
     e.abs(STY, OV_COUNT);
     e.imp(RTS);
+
+    e.comment("---- runtime: status bar ----");
+    // A = rows (0 = off, 2-8). Clears those rows (and their attribute rows) in both nametables.
+    e.label("__status_bar");
+    e.abs(STA, STATUS_ROWS);
+    e.br(BNE, "__sb_on");
+    e.imm(LDA, 0xFF); // release sprite 0
+    e.abs(STA, OAM_SHADOW);
+    e.imp(RTS);
+    e.label("__sb_on");
+    e.imm(LDA, 0);
+    e.abs(STA, STATUS_TMP);
+    e.label("__sb_row");
+    for nt in [0x20u8, 0x24] {
+        e.abs(LDA, STATUS_TMP);
+        for _ in 0..5 {
+            e.acc(ASL);
+        }
+        e.abs(STA, TMP0);
+        e.imm(LDA, nt);
+        e.abs(STA, TMP1);
+        e.ins(LDA, Operand::imm_lo("__blank32"));
+        e.abs(STA, PTR);
+        e.ins(LDA, Operand::imm_hi("__blank32"));
+        e.abs(STA, PTR + 1);
+        e.imm(LDA, 32);
+        e.abs(STA, ARG2);
+        e.jsr("__vram_write");
+    }
+    e.abs(INC, STATUS_TMP);
+    e.abs(LDA, STATUS_TMP);
+    e.abs(CMP, STATUS_ROWS);
+    e.br(BNE, "__sb_row");
+    e.imm(LDA, 0);
+    e.abs(STA, STATUS_TMP);
+    e.label("__sb_attr");
+    e.abs(LDA, STATUS_ROWS); // attribute rows touching the bar: ceil(n / 4)
+    e.imp(CLC);
+    e.imm(ADC, 3);
+    e.acc(LSR);
+    e.acc(LSR);
+    e.abs(CMP, STATUS_TMP);
+    e.br(BEQ, "__sb_done");
+    for hi in [0x23u8, 0x27] {
+        e.abs(LDA, STATUS_TMP);
+        e.acc(ASL);
+        e.acc(ASL);
+        e.acc(ASL);
+        e.imm(ORA, 0xC0);
+        e.abs(STA, TMP0);
+        e.imm(LDA, hi);
+        e.abs(STA, TMP1);
+        e.ins(LDA, Operand::imm_lo("__zero8"));
+        e.abs(STA, PTR);
+        e.ins(LDA, Operand::imm_hi("__zero8"));
+        e.abs(STA, PTR + 1);
+        e.imm(LDA, 8);
+        e.abs(STA, ARG2);
+        e.jsr("__vram_write");
+    }
+    e.abs(INC, STATUS_TMP);
+    e.jmp("__sb_attr");
+    e.label("__sb_done");
+    e.imp(RTS);
+
+    // NMI, rendering on: sprite 0 (tile $7E, behind the background) over the marker
+    // cell (31, n - 1) = tile $7F; both have one pixel in row 6.
+    e.label("__status_nmi");
+    e.abs(LDA, STATUS_ROWS);
+    e.imp(SEC);
+    e.imm(SBC, 1);
+    e.acc(ASL);
+    e.acc(ASL);
+    e.acc(ASL);
+    e.imp(SEC);
+    e.imm(SBC, 1); // OAM y is the line above the sprite: (n - 1) * 8 - 1
+    e.abs(STA, OAM_SHADOW);
+    for (off, v) in [(1u16, 0x7Eu8), (2, 0x20), (3, 248)] {
+        e.imm(LDA, v);
+        e.abs(STA, OAM_SHADOW + off);
+    }
+    e.abs(BIT, PPUSTATUS);
+    e.imm(LDA, 0x20);
+    e.abs(STA, PPUADDR);
+    e.abs(LDA, STATUS_ROWS);
+    e.imp(SEC);
+    e.imm(SBC, 1);
+    for _ in 0..5 {
+        e.acc(ASL);
+    }
+    e.imm(ORA, 31);
+    e.abs(STA, PPUADDR);
+    e.imm(LDA, 0x7F);
+    e.abs(STA, PPUDATA);
+    e.imp(RTS);
+
+    // NMI, end: wait (bounded) for last frame's hit flag to clear, then for this frame's
+    // hit on the status bar's last row, and switch to the camera's scroll.
+    e.label("__status_split");
+    e.imm(LDX, 2);
+    e.imm(LDY, 0);
+    e.label("__ss_clear");
+    e.abs(BIT, PPUSTATUS);
+    e.br(BVC, "__ss_wait");
+    e.imp(DEY);
+    e.br(BNE, "__ss_clear");
+    e.imp(DEX);
+    e.br(BNE, "__ss_clear");
+    e.imp(RTS);
+    e.label("__ss_wait");
+    e.imm(LDX, 4);
+    e.imm(LDY, 0);
+    e.label("__ss_set");
+    e.abs(BIT, PPUSTATUS);
+    e.br(BVS, "__ss_hit");
+    e.imp(DEY);
+    e.br(BNE, "__ss_set");
+    e.imp(DEX);
+    e.br(BNE, "__ss_set");
+    e.imp(RTS); // no hit (marker overwritten?): give up rather than hang
+    e.label("__ss_hit");
+    e.abs(LDA, LAST_CTRL);
+    e.abs(STA, PPUCTRL);
+    e.abs(LDA, LAST_SX);
+    e.abs(STA, PPUSCROLL);
+    e.imp(RTS);
+
+    e.label("__blank32");
+    e.items.push(crate::asm::Item::Bytes(vec![b' '; 32]));
+    e.label("__zero8");
+    e.items.push(crate::asm::Item::Bytes(vec![0; 8]));
 
     e.comment("---- runtime: metasprites ----");
     // ARG0 = first slot, ARG1 = x, ARG2 = y, PTR = [count, (dx, dy, tile, attr)...].

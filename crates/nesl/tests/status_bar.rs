@@ -27,8 +27,11 @@ fn set16(r: &mut Run, name: &str, v: u16) {
     r.nes.bus.ram[a + 1] = (v >> 8) as u8;
 }
 
+/// `(cycle, kind, value)` entries from the test machine's register log.
+type Log = Vec<(u64, u8, u8)>;
+
 /// Register writes made during frame `k`, split at the start of the visible picture.
-fn frame_writes(r: &Run, k: u64) -> (Vec<(u64, u8, u8)>, Vec<(u64, u8, u8)>) {
+fn frame_writes(r: &Run, k: u64) -> (Log, Log) {
     let start = k * CYCLES_PER_FRAME;
     let vis = start + pixel_cycle(0, 0);
     let all: Vec<_> = r.nes.bus.reg_log.iter().copied().filter(|(c, _, _)| (start..start + CYCLES_PER_FRAME).contains(c)).collect();
@@ -94,12 +97,21 @@ fn status_rows_keep_their_text_while_the_level_scrolls() {
 #[test]
 fn status_bar_0_turns_the_split_off() {
     let mut r = run_frames(&format!("{} var t: u8;
-        fn main() {{ draw_map(W); status_bar(2); ppu_on(); loop {{ wait_vblank(); t += 1; if t == 5 {{ status_bar(0); }} }} }}",
-        wide_map("W", 64)), 4, |_| {});
+        fn main() {{ draw_map(W); status_bar(2); ppu_on(); loop {{ wait_vblank(); t += 1; if t == 8 {{ status_bar(0); }} }} }}",
+        wide_map("W", 64)), 0, |_| {});
+    // start-up (drawing the map with rendering off) takes a few frames: wait for the loop
+    let mut guard = 0;
+    while r.u8("t") < 3 {
+        r.nes.run_frames(1).unwrap();
+        guard += 1;
+        assert!(guard < 30, "main loop never started");
+    }
     let k = r.nes.frames - 1;
-    assert!(r.nes.bus.sprite0_at.is_some(), "split on at first");
+    assert_eq!(r.nes.bus.sprite0_at, Some(k * CYCLES_PER_FRAME + pixel_cycle(248, 14)), "split on the 2-row bar");
     assert_eq!(frame_writes(&r, k).1.len(), 2);
-    r.nes.run_frames(6).unwrap();
+    while r.u8("t") < 11 {
+        r.nes.run_frames(1).unwrap();
+    }
     let k = r.nes.frames - 1;
     assert_eq!(r.nes.bus.sprite0_at, None);
     assert!(frame_writes(&r, k).1.is_empty());

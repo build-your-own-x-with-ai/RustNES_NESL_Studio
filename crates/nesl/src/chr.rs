@@ -86,6 +86,9 @@ pub fn build_chr(tiles: &[(u8, [u8; 16])]) -> Vec<u8> {
     for c in b'a'..=b'z' {
         put(c as usize, &FONT[(c - b'a' + b'A' - 0x20) as usize]);
     }
+    // Status bar sprite-0 markers: one pixel in row 6 of tiles $7E (sprite) and $7F (background).
+    chr[0x7E * 16 + 6] = 0x80;
+    chr[0x7F * 16 + 6] = 0x80;
     for (index, data) in tiles {
         let at = *index as usize * 16;
         chr[at..at + 16].copy_from_slice(data);

@@ -52,6 +52,13 @@ pub enum Param {
     Music,
 }
 
+/// A resolved map argument of a built-in.
+pub(crate) enum MapArg {
+    Static { label: String, width: u8, id: u8 },
+    /// Chosen at run time from a map list; the id is on the stack until `map_select`.
+    Dynamic,
+}
+
 pub struct Signature {
     pub params: &'static [Param],
     pub ret: Option<Type>,
@@ -72,6 +79,7 @@ pub fn signature(name: &str) -> Option<Signature> {
         "vram_fill" => sig!(U8, U16 => None),
         "print" => sig!(U8, U8, Text => None),
         "print_u8" | "set_tile" => sig!(U8, U8, U8 => None),
+        "print_u16" => sig!(U8, U8, U16 => None),
         "sprite" => sig!(U8, U8, U8, U8, U8 => None),
         "joypad" => sig!(U8 => U8),
         "scroll" => sig!(U8, U8 => None),
@@ -81,7 +89,7 @@ pub fn signature(name: &str) -> Option<Signature> {
         "draw_map" => sig!(Map => None),
         "map_tile" => sig!(Map, U16, U8 => U8),
         "camera_follow" => sig!(U16, Map => None),
-        "set_map_tile" => sig!(Map, U8, U8, U8 => U8),
+        "set_map_tile" => sig!(Map, U16, U8, U8 => U8),
         "reset_map" => sig!(Map => None),
         "status_bar" => sig!(U8 => None),
         "camera_x" => sig!(=> Some(Type::U16)),
@@ -109,6 +117,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("vram_fill", "vram_fill(v: u8, n: u16)", "从当前地址起连续写 n 个 v（底层）"),
     ("print", "print(x: u8, y: u8, text)", "在背景第 y 行第 x 列写文字；任何时刻都可以调用"),
     ("print_u8", "print_u8(x: u8, y: u8, v: u8)", "以 3 位十进制显示数字"),
+    ("print_u16", "print_u16(x: u8, y: u8, v: u16)", "以 5 位十进制显示数字（00000-65535），适合分数"),
     ("set_tile", "set_tile(x: u8, y: u8, tile: u8)", "改写背景上的一格"),
     ("sprite", "sprite(i, x, y, tile, attr)", "设置第 i 号精灵（0-63），左上角出现在 (x, y)（y = 0 无法显示）；attr 低 2 位选精灵调色板，$40 水平翻转，$80 垂直翻转，$20 放在背景后"),
     ("hide_sprite", "hide_sprite(i: u8)", "隐藏第 i 号精灵"),
@@ -120,7 +129,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("stop_sound", "stop_sound()", "停止全部声音：音乐、音效和 play_tone"),
     ("draw_map", "draw_map(MAP)", "画出地图（最左两屏），镜头归零"),
     ("map_tile", "map_tile(MAP, tx: u16, ty: u8) -> u8", "读地图第 tx 列第 ty 行的字符；越界返回 0；能看到 set_map_tile 的修改"),
-    ("set_map_tile", "set_map_tile(MAP, tx, ty, tile) -> u8", "改写地图一格（画面和卷轴都会更新）；返回 0 表示修改记录已满（最多 64 处）"),
+    ("set_map_tile", "set_map_tile(MAP, tx: u16, ty: u8, tile: u8) -> u8", "改写地图一格（画面和卷轴都会更新）；返回 0 表示修改记录已满（最多 64 处）"),
     ("reset_map", "reset_map(MAP)", "撤销这张地图的全部修改"),
     ("camera_follow", "camera_follow(x: u16, MAP)", "镜头跟随世界坐标 x（每帧调用），自动补画新露出的列"),
     ("camera_x", "camera_x() -> u16", "镜头的世界坐标；屏幕 x = 世界 x - camera_x()"),
@@ -245,6 +254,10 @@ impl Codegen {
                 self.e.abs(STA, ARG2);
                 self.e.jsr("__print");
             }
+            "print_u16" => {
+                self.slots(&[(&args[0], Type::U8, ARG0), (&args[1], Type::U8, ARG1), (&args[2], Type::U16, ARG3)])?;
+                self.e.jsr("__print_u16");
+            }
             "print_u8" | "set_tile" => {
                 self.slots(&[(&args[0], Type::U8, ARG0), (&args[1], Type::U8, ARG1), (&args[2], Type::U8, ARG3)])?;
                 self.e.jsr(if name == "print_u8" { "__print_u8" } else { "__set_tile" });
@@ -264,33 +277,31 @@ impl Codegen {
                 self.e.abs(LDX, CAM_X + 1);
             }
             "camera_follow" => {
-                let (label, width, id) = self.map_label(&args[1])?;
+                let m = self.map_arg(&args[1])?;
                 self.slots(&[(&args[0], Type::U16, ARG0)])?;
-                self.map_pointers(&label, width, id);
+                self.map_setup(&m);
                 self.e.jsr("__camera_follow");
             }
             "draw_map" => {
-                let (label, width, id) = self.map_label(&args[0])?;
-                self.map_pointers(&label, width, id);
+                let m = self.map_arg(&args[0])?;
+                self.map_setup(&m);
                 self.e.jsr("__draw_map");
             }
             "map_tile" => {
-                let (label, width, id) = self.map_label(&args[0])?;
+                let m = self.map_arg(&args[0])?;
                 self.slots(&[(&args[1], Type::U16, ARG0), (&args[2], Type::U8, ARG2)])?;
-                self.e.imm(LDA, width);
-                self.e.abs(STA, ARG3);
-                self.e.imm(LDA, id);
-                self.e.abs(STA, ARG4);
-                self.pointer(&label);
+                self.map_select(&m);
+                self.map_ptrs(&m);
+                self.map_byte(&m, false, ARG3);
+                self.map_byte(&m, true, ARG4);
                 self.e.jsr("__map_tile");
             }
             "set_map_tile" => {
-                let (_, width, id) = self.map_label(&args[0])?;
-                self.slots(&[(&args[1], Type::U8, ARG0), (&args[2], Type::U8, ARG2), (&args[3], Type::U8, ARG3)])?;
-                self.e.imm(LDA, width);
-                self.e.abs(STA, ARG1);
-                self.e.imm(LDA, id);
-                self.e.abs(STA, ARG4);
+                let m = self.map_arg(&args[0])?;
+                self.slots(&[(&args[1], Type::U16, ARG0), (&args[2], Type::U8, ARG2), (&args[3], Type::U8, ARG3)])?;
+                self.map_select(&m);
+                self.map_byte(&m, false, SMT_W);
+                self.map_byte(&m, true, ARG4);
                 self.e.jsr("__set_map_tile");
             }
             "status_bar" => {
@@ -304,9 +315,9 @@ impl Codegen {
                 self.e.jsr("__status_bar");
             }
             "reset_map" => {
-                let (_, _, id) = self.map_label(&args[0])?;
-                self.e.imm(LDA, id);
-                self.e.abs(STA, ARG4);
+                let m = self.map_arg(&args[0])?;
+                self.map_select(&m);
+                self.map_byte(&m, true, ARG4);
                 self.e.jsr("__reset_map");
             }
             "metasprite" => {
@@ -391,20 +402,6 @@ impl Codegen {
         r
     }
 
-    /// PTR = tiles, PTR2 = attributes, ARG2 = width, ARG3 = map id.
-    fn map_pointers(&mut self, label: &str, width: u8, id: u8) {
-        self.pointer(label);
-        let attrs = format!("{label}_a");
-        self.e.ins(LDA, Operand::imm_lo(&attrs));
-        self.e.abs(STA, PTR2);
-        self.e.ins(LDA, Operand::imm_hi(&attrs));
-        self.e.abs(STA, PTR2 + 1);
-        self.e.imm(LDA, width);
-        self.e.abs(STA, ARG2);
-        self.e.imm(LDA, id);
-        self.e.abs(STA, ARG3);
-    }
-
     /// `play_music(melody[, bass[, harmony]])`: voices are set up while the engine is
     /// stopped, and `MU_ON` is written last so the NMI never sees a half-initialised voice.
     fn play_music(&mut self, args: &[Expr], pos: Pos) -> R<()> {
@@ -448,13 +445,86 @@ impl Codegen {
         Ok(())
     }
 
-    fn map_label(&self, e: &Expr) -> R<(String, u8, u8)> {
-        if let ExprKind::Var(n) = &e.kind {
-            if let Some(Sym::Map { label, width, id }) = self.lookup(n) {
-                return Ok((label, width, id));
+    /// A map argument: a map name, or `L[i]` for a map list (a constant index is resolved
+    /// now; any other index is evaluated once and its map id pushed for `map_select`).
+    fn map_arg(&mut self, e: &Expr) -> R<MapArg> {
+        let static_map = |cg: &Self, id: u8, pos: Pos| -> R<MapArg> {
+            match cg.map_table.get(id.wrapping_sub(1) as usize) {
+                Some((label, width)) => Ok(MapArg::Static { label: label.clone(), width: *width, id }),
+                None => cg.err(pos, "this map has errors"),
             }
+        };
+        match &e.kind {
+            ExprKind::Var(n) => match self.lookup(n) {
+                Some(Sym::Map { label, width, id }) => return Ok(MapArg::Static { label, width, id }),
+                Some(Sym::MapList { .. }) => {
+                    return self.err(e.pos, format!("`{n}` is a list of maps; pass one of them with `{n}[i]`"))
+                }
+                _ => {}
+            },
+            ExprKind::Index(n, idx) => {
+                if let Some(Sym::MapList { label, ids }) = self.lookup(n) {
+                    if self.ty(idx)? != Type::U8 {
+                        return self.err(idx.pos, "map list index must be u8");
+                    }
+                    if let Some(i) = self.const_val(idx) {
+                        if i < 0 || i as usize >= ids.len() {
+                            return self.err(idx.pos, format!("index {i} is out of bounds for `{n}` (length {})", ids.len()));
+                        }
+                        return static_map(self, ids[i as usize], e.pos);
+                    }
+                    // an index past the end selects the first map
+                    let ok = self.e.new_label();
+                    self.index_to_x(idx)?;
+                    self.e.imm(CPX, ids.len() as u8);
+                    self.e.br(BCC, &ok);
+                    self.e.imm(LDX, 0);
+                    self.e.label(&ok);
+                    self.e.ins(LDA, Operand::AbsX(crate::asm::Val::Label(label, 0)));
+                    self.e.imp(PHA);
+                    return Ok(MapArg::Dynamic);
+                }
+            }
+            _ => {}
         }
-        self.err(e.pos, "expected a map (declare one with `map NAME = [...]`)")
+        self.err(e.pos, "expected a map (declare one with `map NAME = [...]`, or pick one from a list with `L[i]`)")
+    }
+
+    /// For `L[i]`: pops the map id pushed by `map_arg` and loads PTR, PTR2, SEL_ID, SEL_W.
+    fn map_select(&mut self, m: &MapArg) {
+        if let MapArg::Dynamic = m {
+            self.e.imp(PLA);
+            self.e.jsr("__map_sel");
+        }
+    }
+
+    /// PTR = tiles, PTR2 = attributes (already done by `map_select` for `L[i]`).
+    fn map_ptrs(&mut self, m: &MapArg) {
+        if let MapArg::Static { label, .. } = m {
+            self.pointer(label);
+            let attrs = format!("{label}_a");
+            self.e.ins(LDA, Operand::imm_lo(&attrs));
+            self.e.abs(STA, PTR2);
+            self.e.ins(LDA, Operand::imm_hi(&attrs));
+            self.e.abs(STA, PTR2 + 1);
+        }
+    }
+
+    /// Stores the map's id (`id = true`) or width into `dst`.
+    fn map_byte(&mut self, m: &MapArg, id: bool, dst: u16) {
+        match m {
+            MapArg::Static { width, id: n, .. } => self.e.imm(LDA, if id { *n } else { *width }),
+            MapArg::Dynamic => self.e.abs(LDA, if id { SEL_ID } else { SEL_W }),
+        }
+        self.e.abs(STA, dst);
+    }
+
+    /// PTR = tiles, PTR2 = attributes, ARG2 = width, ARG3 = map id.
+    fn map_setup(&mut self, m: &MapArg) {
+        self.map_select(m);
+        self.map_ptrs(m);
+        self.map_byte(m, false, ARG2);
+        self.map_byte(m, true, ARG3);
     }
 
     fn pointer(&mut self, label: &str) {
@@ -690,6 +760,33 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.abs(LDA, ARG3);
     e.abs(STA, PRINT_BUF);
     e.imm(LDA, 1);
+    e.jmp("__print_buf");
+
+    // ARG0 = x, ARG1 = y, ARG3:ARG4 = value; five digits by repeated subtraction
+    e.label("__print_u16");
+    for (i, unit) in [10000u16, 1000, 100, 10].into_iter().enumerate() {
+        let (top, done) = (format!("__pw_{i}"), format!("__pw_{i}_d"));
+        e.imm(LDX, b'0');
+        e.label(&top);
+        e.abs(LDA, ARG3);
+        e.imp(SEC);
+        e.imm(SBC, unit as u8);
+        e.abs(STA, TMP0);
+        e.abs(LDA, ARG4);
+        e.imm(SBC, (unit >> 8) as u8);
+        e.br(BCC, &done); // value < unit
+        e.abs(STA, ARG4);
+        e.abs(LDA, TMP0);
+        e.abs(STA, ARG3);
+        e.imp(INX);
+        e.jmp(&top);
+        e.label(&done);
+        e.abs(STX, PRINT_BUF + i as u16);
+    }
+    e.abs(LDA, ARG3);
+    e.imm(ORA, b'0');
+    e.abs(STA, PRINT_BUF + 4);
+    e.imm(LDA, 5);
     e.jmp("__print_buf");
 
     // ARG0 = x, ARG1 = y, ARG3 = value
@@ -1148,8 +1245,10 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.label("__set_map_tile");
     e.imm(LDA, 0);
     e.abs(STA, OV_RES);
+    e.abs(LDA, ARG1); // column high byte: maps are at most 255 wide
+    e.br(BNE, "__smt_done");
     e.abs(LDA, ARG0);
-    e.abs(CMP, ARG1);
+    e.abs(CMP, SMT_W);
     e.br(BCS, "__smt_done");
     e.abs(LDA, ARG2);
     e.imm(CMP, 30);

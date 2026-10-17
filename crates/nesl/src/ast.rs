@@ -46,6 +46,8 @@ pub enum Decl {
     Const { name: String, value: Expr, pos: Pos },
     /// `const NAME: [T] = [...]` or `= "text"` — read-only table in ROM.
     Data { name: String, elem: Type, elems: Vec<Expr>, pos: Pos },
+    /// `const NAME: [map] = [M, ...];` — maps chosen at run time with `NAME[i]`.
+    MapList { name: String, maps: Vec<(String, Pos)>, pos: Pos },
     Struct { name: String, fields: Vec<(String, Type)>, pos: Pos },
     Var { name: String, ty: VarType, init: Option<Expr>, pos: Pos },
     Tile { index: Expr, rows: Vec<(String, Pos)>, pos: Pos },

@@ -169,7 +169,7 @@
   // ---------------------------------------------------------------- editor
   // fallbacks until /api/builtins (the compiler's own lists) arrives
   const FALLBACK_KW = "fn let var const tile map metasprite palette_zone music sound struct match if else while loop for in break continue return as true false u8 i8 u16".split(" ");
-  const FALLBACK_FNS = "wait_vblank ppu_on ppu_off load_palette vram_addr vram_put vram_fill print print_u8 sprite hide_sprite joypad scroll rand frame_count peek poke play_tone stop_sound set_tile draw_map map_tile metasprite collide sfx camera_follow camera_x play_music stop_music set_map_tile reset_map status_bar".split(" ");
+  const FALLBACK_FNS = "wait_vblank ppu_on ppu_off load_palette vram_addr vram_put vram_fill print print_u8 print_u16 sprite hide_sprite joypad scroll rand frame_count peek poke play_tone stop_sound set_tile draw_map map_tile metasprite collide sfx camera_follow camera_x play_music stop_music set_map_tile reset_map status_bar".split(" ");
   let builtins = { functions: [], constants: [], keywords: FALLBACK_KW };
   let fnNames = new Set(FALLBACK_FNS), kwNames = new Set(FALLBACK_KW);
   const TOKEN = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)|\b(0x[0-9a-fA-F_]+|0b[01_]+|\d[\d_]*)\b|([A-Za-z_]\w*)/g;

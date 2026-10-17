@@ -158,6 +158,23 @@ impl Parser {
                 let name = self.ident()?;
                 if self.eat_sym(":") {
                     if self.eat_sym("[") {
+                        if matches!(self.peek(), Tok::Ident(s) if s == "map") {
+                            self.advance();
+                            self.expect_sym("]")?;
+                            self.expect_sym("=")?;
+                            self.expect_sym("[")?;
+                            let mut maps = Vec::new();
+                            while !self.is_sym("]") {
+                                let mpos = self.pos();
+                                maps.push((self.ident()?, mpos));
+                                if !self.eat_sym(",") {
+                                    break;
+                                }
+                            }
+                            self.expect_sym("]")?;
+                            self.expect_sym(";")?;
+                            return Ok(Decl::MapList { name, maps, pos });
+                        }
                         let elem = self.scalar_type()?;
                         self.expect_sym("]")?;
                         self.expect_sym("=")?;

@@ -32,8 +32,13 @@ pub const USER_ZP_START: u16 = 0x18;
 pub const OAM_SHADOW: u16 = 0x0200;
 /// VRAM update queue: entries of `[addr_hi, addr_lo, len, bytes...]`, flushed by NMI.
 pub const VQ: u16 = 0x0300;
-pub const VQ_SIZE: u8 = 96;
-pub const PRINT_BUF: u16 = 0x0360; // 3 bytes used by print_u8 / set_tile
+pub const VQ_SIZE: u8 = 91;
+pub const PRINT_BUF: u16 = 0x035B; // 5 bytes used by print_u8 / print_u16 / set_tile
+/// Map width for `set_map_tile` (its column takes ARG0:ARG1).
+pub const SMT_W: u16 = 0x0360;
+/// Map chosen through a map list (`L[i]`): its id and width, set by `__map_sel`.
+pub const SEL_ID: u16 = 0x0361;
+pub const SEL_W: u16 = 0x0362;
 /// Non-zero while the main program is appending to the queue; NMI then skips the flush.
 pub const VQ_LOCK: u16 = 0x0363;
 // Sound effect state, advanced once per frame by the NMI.

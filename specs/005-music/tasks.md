@@ -25,8 +25,8 @@ description: "Task list for music and custom sound effects"
 
 ## Phase 4: US2 多声部 (P2)
 
-- [ ] T507 [US2] 测试：三角波低音、和声、未用声部静音、方波音域检查
-- [ ] T508 [US2] 实现：三声部
+- [x] T507 [US2] 测试：三角波低音、和声、未用声部静音、方波音域检查
+- [x] T508 [US2] 实现：三声部
 
 ## Phase 5: US3 自定义音效 (P2)
 

@@ -101,3 +101,46 @@ fn music_errors() {
     assert!(m("const P: [u8] = [1]; fn main() { play_music(P); }").contains("music"));
     assert!(m("fn main() { play_music(); }").contains("1 to 3"));
 }
+
+// ---------------------------------------------------------------- US2 voices
+
+#[test]
+fn bass_plays_on_the_triangle_an_octave_lower_per_period() {
+    let (_, per) = trace(&song("music M = \"O4 A\"; music B = \"O3 A R\";", "play_music(M, B)"), 70);
+    // triangle A3 uses the pulse period of A4
+    assert_eq!(writes(&per, 0x400A)[0].1, 253);
+    assert_eq!(writes(&per, 0x4002)[0].1, 253, "melody A4 on pulse 1");
+    let en = writes(&per, 0x4015);
+    assert!(en.iter().any(|(_, v)| v & 0x05 == 0x05), "pulse 1 and triangle together: {en:?}");
+    // the rest after the bass note turns the triangle off
+    let rest_frame = writes(&per, 0x400A)[0].0 + 30;
+    assert!(en.iter().any(|(f, v)| *f == rest_frame && v & 0x04 == 0), "{en:?}");
+}
+
+#[test]
+fn harmony_uses_pulse_2_and_voices_keep_their_own_time() {
+    let (_, per) = trace(&song("music M = \"L4 C\"; music B = \"L8 C\"; music H = \"L2 E\";", "play_music(M, B, H)"), 130);
+    let mel: Vec<usize> = writes(&per, 0x4002).into_iter().map(|(f, _)| f).collect();
+    let bass: Vec<usize> = writes(&per, 0x400A).into_iter().map(|(f, _)| f).collect();
+    let harm: Vec<usize> = writes(&per, 0x4006).into_iter().map(|(f, _)| f).collect();
+    assert_eq!(mel[1] - mel[0], 30);
+    assert_eq!(bass[1] - bass[0], 15);
+    assert_eq!(harm[1] - harm[0], 60);
+    assert_eq!(writes(&per, 0x4006)[0].1, pulse_period(52) as u8);
+}
+
+#[test]
+fn unused_voices_stay_silent() {
+    let (_, per) = trace(&song("music M = \"C D E F\";", "play_music(M)"), 90);
+    assert!(writes(&per, 0x400A).is_empty() && writes(&per, 0x4006).is_empty());
+}
+
+#[test]
+fn pulse_voices_reject_notes_below_a1_but_bass_accepts_them() {
+    let low = "music L = \"O1 G A\";";
+    let e = &errors(&format!("{low} fn main() {{ play_music(L); }}"))[0];
+    assert!(e.message.contains("below A1"), "{}", e.message);
+    assert_eq!(e.col, 15, "points at the G");
+    build(&format!("{low} music M = \"C\"; fn main() {{ play_music(M, L); }}"));
+    assert!(errors(&format!("{low} music M = \"C\"; fn main() {{ play_music(M, M, L); }}"))[0].message.contains("below A1"));
+}

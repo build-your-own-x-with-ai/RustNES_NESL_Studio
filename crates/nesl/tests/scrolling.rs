@@ -2,25 +2,6 @@
 mod common;
 use common::*;
 
-/// A map `width` columns wide whose cell (c, r) is a printable character derived from
-/// both coordinates, so any misplaced column or row is detected.
-fn cell(c: usize, r: usize) -> u8 {
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[(c * 7 + r * 3) % 36]
-}
-
-fn wide_map(name: &str, width: usize) -> String {
-    let rows: Vec<String> = (0..30)
-        .map(|r| format!("    \"{}\"", (0..width).map(|c| cell(c, r) as char).collect::<String>()))
-        .collect();
-    format!("map {name} = [\n{}\n];\n", rows.join(",\n"))
-}
-
-/// Nametable byte for ring column `slot` (0-63) and row `r`.
-fn nt(r: &Run, slot: usize, row: usize) -> u8 {
-    let base = if slot < 32 { 0x2000 } else { 0x2400 };
-    r.nes.bus.vram[base + row * 32 + slot % 32]
-}
-
 // ---------------------------------------------------------------- US1 wide maps
 
 #[test]

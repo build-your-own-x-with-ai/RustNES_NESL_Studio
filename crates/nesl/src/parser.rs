@@ -200,6 +200,42 @@ impl Parser {
                 self.expect_sym("}")?;
                 Ok(Decl::Struct { name, fields, pos })
             }
+            // `map` and `metasprite` are contextual: only `map NAME =` at the top level declares one.
+            Tok::Ident(kw) if (kw == "map" || kw == "metasprite") && self.is_decl_head() => {
+                let is_map = kw == "map";
+                self.advance();
+                let name = self.ident()?;
+                self.expect_sym("=")?;
+                self.expect_sym("[")?;
+                let decl = if is_map {
+                    let mut rows = Vec::new();
+                    while !self.is_sym("]") {
+                        let rpos = self.pos();
+                        match self.advance().tok {
+                            Tok::Str(b) => rows.push((String::from_utf8_lossy(&b).into_owned(), rpos)),
+                            t => {
+                                return Err(Diagnostic::new(rpos, format!("expected map row string, found {}", describe(&t))))
+                            }
+                        }
+                        if !self.eat_sym(",") {
+                            break;
+                        }
+                    }
+                    Decl::Map { name, rows, pos }
+                } else {
+                    let mut parts = Vec::new();
+                    while !self.is_sym("]") {
+                        parts.push(self.meta_part()?);
+                        if !self.eat_sym(",") {
+                            break;
+                        }
+                    }
+                    Decl::Metasprite { name, parts, pos }
+                };
+                self.expect_sym("]")?;
+                self.expect_sym(";")?;
+                Ok(decl)
+            }
             Tok::Kw("tile") => {
                 self.advance();
                 let index = self.expr()?;
@@ -245,6 +281,34 @@ impl Parser {
             }
             t => self.err(format!("expected `fn`, `var`, `const`, `struct` or `tile`, found {}", describe(t))),
         }
+    }
+
+    /// True when the tokens after the current one are `NAME =`.
+    fn is_decl_head(&self) -> bool {
+        let at = |k: usize| &self.toks[(self.i + k).min(self.toks.len() - 1)].tok;
+        matches!(at(1), Tok::Ident(_)) && matches!(at(2), Tok::Sym("="))
+    }
+
+    /// `(dx, dy, tile[, attr])`
+    fn meta_part(&mut self) -> PResult<MetaPart> {
+        let pos = self.pos();
+        self.expect_sym("(")?;
+        let mut v = Vec::new();
+        while !self.is_sym(")") {
+            v.push(self.expr()?);
+            if !self.eat_sym(",") {
+                break;
+            }
+        }
+        self.expect_sym(")")?;
+        if v.len() != 3 && v.len() != 4 {
+            return Err(Diagnostic::new(pos, "metasprite piece must be (dx, dy, tile) or (dx, dy, tile, attr)"));
+        }
+        let attr = if v.len() == 4 { v.pop() } else { None };
+        let tile = v.pop().unwrap();
+        let dy = v.pop().unwrap();
+        let dx = v.pop().unwrap();
+        Ok(MetaPart { dx, dy, tile, attr })
     }
 
     /// `[e, e, ...]` or a string literal.

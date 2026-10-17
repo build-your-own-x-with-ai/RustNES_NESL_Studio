@@ -14,8 +14,8 @@ description: "Task list for game development API"
 
 ## Phase 2: Foundational
 
-- [ ] T302 测试 + 实现：测试机 `render_conflicts` 计数（vblank 窗口）`crates/nes-sim`
-- [ ] T303 测试 + 实现：parser 上下文声明 `map` / `metasprite` 与元组 `crates/nesl/src/{ast,parser}.rs`
+- [x] T302 测试 + 实现：测试机 `render_conflicts` 计数（vblank 窗口）`crates/nes-sim`
+- [x] T303 测试 + 实现：parser 上下文声明 `map` / `metasprite` 与元组 `crates/nesl/src/{ast,parser}.rs`
 
 ## Phase 3: US1 VRAM 队列 (P1) 🎯 MVP
 

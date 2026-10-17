@@ -9,5 +9,5 @@ description: "Task list for second-emulator cross-checking"
 - [x] T703 [US1] 实现渲染器
 - [x] T704 [US2] Node 运行器 `tools/xcheck/run.js`
 - [x] T705 [US2] 交叉验证测试（4 个场景、缺失时跳过、不一致输出 PNG）`crates/nesl/tests/xcheck.rs`
-- [ ] T706 分析并处理发现的不一致
-- [ ] T707 README（如何运行）；clippy 清零；合并到 `main`
+- [x] T706 分析并处理发现的不一致
+- [x] T707 README（如何运行）；clippy 清零；合并到 `main`

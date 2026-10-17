@@ -135,11 +135,13 @@ fn check(name: &str, src: &str, frames: u64, buttons: u8) {
     std::fs::create_dir_all(&dir).unwrap();
     png(&dir.join(format!("{name}-ours.png")), &ours_rgb.iter().map(|&c| rgb(c)).collect::<Vec<_>>());
     png(&dir.join(format!("{name}-jsnes.png")), &theirs.iter().map(|&c| rgb(c)).collect::<Vec<_>>());
+    let diff_path = dir.join(format!("{name}-diff.png"));
+    let _ = std::fs::remove_file(&diff_path); // a stale diff from an earlier failure would mislead
     if !bad.is_empty() {
         let diff: Vec<[u8; 3]> = (0..ours.len())
             .map(|i| if ours_rgb[i] != theirs[i] { [255, 0, 0] } else { rgb(theirs[i]).map(|v| v / 3) })
             .collect();
-        png(&dir.join(format!("{name}-diff.png")), &diff);
+        png(&diff_path, &diff);
         let mut rows: Vec<usize> = bad.iter().map(|i| i / WIDTH).collect();
         rows.dedup();
         let first = bad[0];

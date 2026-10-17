@@ -141,7 +141,7 @@ impl Codegen {
             "load_palette" => {
                 let (label, len) = match &args[0].kind {
                     ExprKind::Var(n) => match self.lookup(n) {
-                        Some(Sym::Data { label, len, elem }) if elem == Type::U8 => (label, len),
+                        Some(Sym::Data { label, len, elem: Type::U8 }) => (label, len),
                         _ => return self.err(args[0].pos, "`load_palette` expects a constant array (`const PAL: [u8] = [...]`)"),
                     },
                     _ => return self.err(args[0].pos, "`load_palette` expects a constant array (`const PAL: [u8] = [...]`)"),
@@ -236,7 +236,7 @@ impl Codegen {
                 (label, bytes.len())
             }
             ExprKind::Var(n) => match self.lookup(n) {
-                Some(Sym::Data { label, len, elem }) if elem == Type::U8 => (label, len as usize),
+                Some(Sym::Data { label, len, elem: Type::U8 }) => (label, len as usize),
                 _ => return self.err(e.pos, "`print` expects a string literal or a constant array"),
             },
             _ => return self.err(e.pos, "`print` expects a string literal or a constant array"),

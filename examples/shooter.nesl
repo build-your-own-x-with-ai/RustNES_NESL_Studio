@@ -1,0 +1,107 @@
+// SPACE DODGE — shows off struct, i8 and match (NESL v2)
+// Move the ship with LEFT/RIGHT, fire with A. Rocks bounce off the walls.
+
+const PAL: [u8] = [
+    0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,
+    0x0F, 0x21, 0x31, 0x30,  0x0F, 0x17, 0x27, 0x37,  0x0F, 0x28, 0x38, 0x30,  0x0F, 0x14, 0x24, 0x34,
+];
+
+const ROCKS = 6;
+const SHIP_Y = 200;
+
+tile 1 = ["...33...", "...33...", "..3113..", "..3113..", ".311113.", "31111113", "31.33.13", "3......3"]; // ship
+tile 2 = ["..2222..", ".222222.", "22232222", "22222322", "22322222", "22222222", ".222222.", "..2222.."]; // rock
+tile 3 = ["...3....", "...3....", "...3....", "...3....", "........", "........", "........", "........"]; // shot
+
+struct Rock { x: u8, y: u8, vx: i8, vy: i8, alive: u8 }
+struct Shot { x: u8, y: u8, active: u8 }
+
+var rocks: [Rock; ROCKS];
+var shot: Shot;
+var ship_x: u8 = 120;
+var score: u8;
+var state: u8;        // 0 = playing, 1 = game over
+var last_pad: u8;
+
+fn spawn(i: u8) {
+    rocks[i].x = rand() % 224 + 16;
+    rocks[i].y = 16;
+    rocks[i].vy = (rand() & 1) as i8 + 1;
+    match rand() % 4 {
+        0 => rocks[i].vx = -2,
+        1 => rocks[i].vx = -1,
+        2 => rocks[i].vx = 1,
+        _ => rocks[i].vx = 2,
+    }
+    rocks[i].alive = 1;
+}
+
+fn update_rocks() {
+    for i in 0..ROCKS {
+        if !rocks[i].alive { spawn(i); }
+        rocks[i].x += rocks[i].vx;
+        rocks[i].y += rocks[i].vy;
+        // bounce: flip the signed velocity at the walls
+        if rocks[i].x < 8 || rocks[i].x > 240 { rocks[i].vx = -rocks[i].vx; }
+        if rocks[i].y > 230 { rocks[i].alive = 0; }
+
+        if shot.active && shot.x + 4 > rocks[i].x && shot.x < rocks[i].x + 8
+            && shot.y < rocks[i].y + 8 && shot.y + 8 > rocks[i].y {
+            rocks[i].alive = 0;
+            shot.active = 0;
+            score += 1;
+            play_tone(0x0A0);
+        }
+        if rocks[i].y + 8 > SHIP_Y && rocks[i].y < SHIP_Y + 8
+            && rocks[i].x + 6 > ship_x && rocks[i].x < ship_x + 6 {
+            state = 1;
+            play_tone(0x5F0);
+        }
+        sprite(i + 2, rocks[i].x, rocks[i].y, 2, 1);
+    }
+}
+
+fn main() {
+    load_palette(PAL);
+    print(9, 2, "SPACE DODGE");
+    print(2, 27, "SCORE");
+    for i in 0..ROCKS { spawn(i); rocks[i].y = i * 24; }
+    ppu_on();
+
+    loop {
+        wait_vblank();
+        print_u8(8, 27, score);
+        if frame_count() & 7 == 0 { stop_sound(); }
+
+        let pad = joypad(0);
+        match state {
+            0 => {
+                if pad & BTN_LEFT && ship_x > 8 { ship_x -= 2; }
+                if pad & BTN_RIGHT && ship_x < 240 { ship_x += 2; }
+                if pad & BTN_A && !(last_pad & BTN_A) && !shot.active {
+                    shot.x = ship_x + 2;
+                    shot.y = SHIP_Y - 8;
+                    shot.active = 1;
+                }
+                if shot.active {
+                    shot.y -= 4;
+                    if shot.y < 8 { shot.active = 0; }
+                }
+                update_rocks();
+            }
+            _ => {
+                print(11, 14, "GAME OVER");
+                if pad & BTN_START {
+                    print(11, 14, "         ");
+                    score = 0;
+                    state = 0;
+                    for i in 0..ROCKS { spawn(i); }
+                }
+            }
+        }
+        last_pad = pad;
+
+        sprite(0, ship_x, SHIP_Y, 1, 0);
+        if shot.active { sprite(1, shot.x, shot.y, 3, 2); } else { hide_sprite(1); }
+    }
+}

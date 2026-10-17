@@ -13,6 +13,9 @@ use crate::{Diagnostic, VarInfo};
 
 pub(crate) type R<T> = Result<T, Diagnostic>;
 
+/// Symbols to bind for a struct allocation, plus its contiguous (addr, size) region.
+type Allocation = (Vec<(String, Sym)>, u16, u16);
+
 #[derive(Clone, Debug)]
 pub(crate) enum Sym {
     Var { addr: u16, ty: Type },
@@ -243,7 +246,7 @@ impl Codegen {
 
     /// Allocates a struct (`len == None`) or struct array; returns the symbols to bind
     /// (`name` plus one per field) and the contiguous (addr, size) region.
-    fn alloc_struct(&mut self, name: &str, sname: &str, len: Option<&Expr>, pos: Pos) -> R<(Vec<(String, Sym)>, u16, u16)> {
+    fn alloc_struct(&mut self, name: &str, sname: &str, len: Option<&Expr>, pos: Pos) -> R<Allocation> {
         let Some(fields) = self.structs.get(sname).cloned() else {
             return self.err(pos, format!("unknown struct `{sname}`"));
         };
@@ -530,11 +533,8 @@ impl Codegen {
         if let Some(dot) = name.find('.') {
             let base = &name[..dot];
             let field = &name[dot + 1..];
-            match self.lookup(base) {
-                Some(Sym::Struct(sname) | Sym::StructArray(sname)) => {
-                    return Diagnostic::new(pos, format!("no field `{field}` in struct `{sname}`"));
-                }
-                _ => {}
+            if let Some(Sym::Struct(sname) | Sym::StructArray(sname)) = self.lookup(base) {
+                return Diagnostic::new(pos, format!("no field `{field}` in struct `{sname}`"));
             }
             return Diagnostic::new(pos, format!("`{base}` is not a struct or struct array"));
         }

@@ -37,3 +37,14 @@ fn game_runs_until_game_over_and_restarts() {
     nes.run_frames(3).unwrap();
     assert_eq!((nes.peek(over), nes.peek(lives)), (0, 3));
 }
+
+#[test]
+fn shooter_fires_and_moves() {
+    let out = build(&example("shooter"));
+    let mut nes = TestNes::from_ines(&out.rom).unwrap();
+    nes.run_frames(5).unwrap();
+    nes.set_buttons(0, 0x80 | 0x01);
+    nes.run_frames(3).unwrap();
+    assert!(nes.peek(out.vars["ship_x"].addr) > 120);
+    assert_eq!(nes.peek(out.vars["shot.active"].addr), 1);
+}

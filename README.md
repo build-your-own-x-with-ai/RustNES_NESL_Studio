@@ -44,16 +44,19 @@ cargo build --release
 
 | 能力 | 写法 |
 |---|---|
-| 类型 | `u8`、`u16`，`as` 转换 |
+| 类型 | `u8`、`i8`（有符号）、`u16`，`as` 转换（i8 → u16 符号扩展） |
 | 全局 / 局部 | `var score: u16;`、`let x = 3;` |
 | 常量 / ROM 数据 | `const SPEED = 2;`、`const PAL: [u8] = [...];`、`const MSG: [u8] = "HI";` |
-| RAM 数组 | `var buf: [u8; 16];` → `buf[i] += 1;` |
+| 数组 | `var buf: [u8; 16];`、`var hi: [u16; 5];`、`const NOTES: [u16] = [...];`、函数内 `let tmp: [u8; 8];`（每次清零） |
 | 控制流 | `if / else if / else`、`while`、`loop`、`for i in 0..8`、`break`、`continue` |
 | 函数 | `fn add(a: u8, b: u8) -> u8 { return a + b; }`（不支持递归） |
 | 图块 | `tile N = [8 行 × 8 像素，字符 . 1 2 3]` |
+| 结构体 | `struct Enemy { x: u8, y: u8, vx: i8 }`、`var es: [Enemy; 8];` → `es[i].x += es[i].vx;` |
+| match | `match state { 0 => title(), 1 \| 2 => play(), 3..=9 => {...} _ => {} }` |
 | NES API | `wait_vblank ppu_on ppu_off load_palette vram_addr vram_put vram_fill print print_u8 sprite hide_sprite joypad scroll rand frame_count peek poke play_tone stop_sound`，按键常量 `BTN_A…BTN_RIGHT` |
 
-完整参考：[`specs/001-nesl-compiler/contracts/language.md`](specs/001-nesl-compiler/contracts/language.md)。
+完整参考：[`specs/001-nesl-compiler/contracts/language.md`](specs/001-nesl-compiler/contracts/language.md)，
+v2 新增内容见 [`specs/002-language-extensions/contracts/language.md`](specs/002-language-extensions/contracts/language.md)。
 内置 8×8 ASCII 字体，`print` 无需任何素材即可显示文字。
 
 > 硬件提示：`print` / `vram_*` 会写显存，请在 `ppu_on()` 之前，或主循环里紧跟 `wait_vblank()` 之后少量调用。
@@ -64,8 +67,8 @@ cargo build --release
 crates/nes-sim   6502 CPU（通过 nestest 全部 5003 行官方指令校验）+ 简化 NES 测试机
 crates/nesl      编译器库：lexer → parser → codegen → assembler → CHR/iNES
 crates/nesc      CLI 与浏览器编辑器（std-only HTTP 服务 + web/index.html）
-examples/        hello / sprite / game（接星星小游戏）
-specs/001-…      Spec Kit 文档：spec.md（需求）plan.md（计划）tasks.md（实现任务）等
+examples/        hello / sprite / game（接星星）/ shooter（struct + i8 + match 演示）
+specs/00x-…      Spec Kit 文档：spec.md（需求）plan.md（计划）tasks.md（实现任务）等
 ```
 
 ## 开发方式

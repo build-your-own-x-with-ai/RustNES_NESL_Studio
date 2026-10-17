@@ -39,9 +39,9 @@ description: "Task list for NESL language extensions"
 
 ## Phase 7: Polish
 
-- [ ] T212 [P] 示例 `examples/shooter.nesl`（struct + i8 + match）+ 端到端测试；编辑器示例列表与高亮
-- [ ] T213 [P] README / 语言参考更新；clippy 清零
-- [ ] T214 合并到 `main`
+- [x] T212 [P] 示例 `examples/shooter.nesl`（struct + i8 + match）+ 端到端测试；编辑器示例列表与高亮
+- [x] T213 [P] README / 语言参考更新；clippy 清零
+- [x] T214 合并到 `main`
 
 ## Dependencies
 

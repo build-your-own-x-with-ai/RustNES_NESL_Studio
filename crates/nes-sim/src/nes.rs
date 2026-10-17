@@ -7,6 +7,8 @@ use crate::cpu::{Bus, Cpu};
 pub const CYCLES_PER_FRAME: u64 = 29781;
 /// Extra CPU cycles charged for an OAM DMA.
 pub const OAM_DMA_CYCLES: u64 = 513;
+/// CPU cycles of vblank after each frame boundary (20 scanlines) in which VRAM may be written.
+pub const VBLANK_CYCLES: u64 = 2273;
 
 pub struct NesBus {
     pub ram: [u8; 0x800],
@@ -19,6 +21,11 @@ pub struct NesBus {
     pub scroll: (u8, u8),
     pub buttons: [u8; 2],
     pub apu_writes: Vec<(u16, u8)>,
+    /// `$2006`/`$2007` writes made while rendering is on and outside vblank
+    /// (these corrupt the picture on real hardware).
+    pub render_conflicts: u64,
+    /// CPU cycle at which the current instruction started (set by `TestNes::step`).
+    pub now: u64,
     oam_addr: u8,
     write_toggle: bool,
     ppu_addr: u16,
@@ -42,6 +49,8 @@ impl NesBus {
             scroll: (0, 0),
             buttons: [0; 2],
             apu_writes: Vec::new(),
+            render_conflicts: 0,
+            now: 0,
             oam_addr: 0,
             write_toggle: false,
             ppu_addr: 0,
@@ -112,6 +121,14 @@ impl NesBus {
         0x40 | bit
     }
 
+    fn check_vram_access(&mut self) {
+        let rendering = self.ppumask & 0x18 != 0;
+        let in_vblank = self.now % CYCLES_PER_FRAME < VBLANK_CYCLES;
+        if rendering && !in_vblank {
+            self.render_conflicts += 1;
+        }
+    }
+
     fn oam_dma(&mut self, page: u8) {
         let base = (page as u16) << 8;
         for i in 0..256u16 {
@@ -174,6 +191,7 @@ impl Bus for NesBus {
                     self.write_toggle = !self.write_toggle;
                 }
                 6 => {
+                    self.check_vram_access();
                     if self.write_toggle {
                         self.ppu_addr = (self.ppu_addr & 0xFF00) | val as u16;
                     } else {
@@ -182,6 +200,7 @@ impl Bus for NesBus {
                     self.write_toggle = !self.write_toggle;
                 }
                 7 => {
+                    self.check_vram_access();
                     self.vram[Self::vram_index(self.ppu_addr)] = val;
                     self.ppu_increment();
                 }
@@ -248,6 +267,7 @@ impl TestNes {
     /// firing NMI if enabled. Returns the total cycles consumed.
     pub fn step(&mut self) -> Result<u32, String> {
         let before = self.cpu.cycles;
+        self.bus.now = before;
         self.cpu.step(&mut self.bus).map_err(|e| e.to_string())?;
         let dma = std::mem::take(&mut self.bus.pending_dma_cycles);
         self.cpu.cycles += dma;

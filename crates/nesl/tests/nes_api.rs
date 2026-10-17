@@ -45,8 +45,9 @@ fn sprites_reach_oam_through_nmi_dma() {
             hide_sprite(0);
             loop { wait_vblank(); }
         }", 5, |_| {});
-    assert_eq!(&r.nes.bus.oam[4..8], &[50, 3, 0x41, 100]);
-    assert_eq!(&r.nes.bus.oam[252..256], &[2, 3, 4, 1]);
+    // OAM y is one less than the requested y (the PPU draws sprites one line lower)
+    assert_eq!(&r.nes.bus.oam[4..8], &[49, 3, 0x41, 100]);
+    assert_eq!(&r.nes.bus.oam[252..256], &[1, 3, 4, 1]);
     assert_eq!(r.nes.bus.oam[0], 0xFF);
     assert_eq!(r.nes.bus.ppumask, 0x1E);
 }

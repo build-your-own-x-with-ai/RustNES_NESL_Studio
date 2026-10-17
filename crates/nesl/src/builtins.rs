@@ -110,7 +110,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("print", "print(x: u8, y: u8, text)", "在背景第 y 行第 x 列写文字；任何时刻都可以调用"),
     ("print_u8", "print_u8(x: u8, y: u8, v: u8)", "以 3 位十进制显示数字"),
     ("set_tile", "set_tile(x: u8, y: u8, tile: u8)", "改写背景上的一格"),
-    ("sprite", "sprite(i, x, y, tile, attr)", "设置第 i 号精灵（0-63）；attr 低 2 位选精灵调色板，$40 水平翻转，$80 垂直翻转，$20 放在背景后"),
+    ("sprite", "sprite(i, x, y, tile, attr)", "设置第 i 号精灵（0-63），左上角出现在 (x, y)（y = 0 无法显示）；attr 低 2 位选精灵调色板，$40 水平翻转，$80 垂直翻转，$20 放在背景后"),
     ("hide_sprite", "hide_sprite(i: u8)", "隐藏第 i 号精灵"),
     ("joypad", "joypad(port: u8) -> u8", "读手柄（0 或 1），用 & BTN_A 等判断按键"),
     ("scroll", "scroll(x: u8, y: u8)", "设置背景滚动（不用 camera_follow 时）"),
@@ -1419,6 +1419,8 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.abs(LDA, TMP5);
     e.br(BNE, "__ms_hide");
     e.abs(LDA, TMP4);
+    e.imp(SEC);
+    e.imm(SBC, 1); // OAM y is one line above the drawn row (see __sprite)
     e.jmp("__ms_store");
     e.label("__ms_hide");
     e.imm(LDA, 0xFF);
@@ -1442,7 +1444,13 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.acc(ASL);
     e.acc(ASL);
     e.imp(TAX);
-    for (slot, off) in [(ARG2, 0u16), (ARG3, 1), (ARG4, 2), (ARG1, 3)] {
+    // The PPU draws a sprite one line below its OAM y, so store y - 1: the sprite's top
+    // row is then exactly at y (and y = 0, which hardware cannot show, becomes hidden).
+    e.abs(LDA, ARG2);
+    e.imp(SEC);
+    e.imm(SBC, 1);
+    e.ins(STA, Operand::abs_x(OAM_SHADOW));
+    for (slot, off) in [(ARG3, 1u16), (ARG4, 2), (ARG1, 3)] {
         e.abs(LDA, slot);
         e.ins(STA, Operand::abs_x(OAM_SHADOW + off));
     }

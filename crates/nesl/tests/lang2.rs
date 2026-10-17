@@ -211,5 +211,7 @@ fn preview_enemy_loop_compiles_and_runs() {
         }", 6, |_| {});
     assert_eq!(r.nes.peek(0x0200), 0xFF, "enemy 0 has hp 0 and is hidden");
     assert_eq!(r.nes.peek(0x0207), 24, "enemy 1 sprite x");
-    assert!(r.nes.peek(0x0204) >= 4, "enemy 1 moved down");
+    // OAM holds y - 1; the enemy moves one pixel per frame after setup
+    let oam_y = r.nes.peek(0x0204);
+    assert!(oam_y >= 3, "enemy 1 moved down (OAM y = {oam_y})");
 }

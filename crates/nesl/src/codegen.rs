@@ -374,6 +374,7 @@ impl Codegen {
                 self.globals.insert(name.clone(), Sym::Map { label: label.clone() });
                 self.data.push((label, bytes));
             }
+            Decl::PaletteZone { pos, .. } => return self.err(*pos, "not implemented yet"),
             Decl::Metasprite { name, parts, pos } => {
                 self.define(name, *pos)?;
                 if parts.is_empty() || parts.len() > 63 {

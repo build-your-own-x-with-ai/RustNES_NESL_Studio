@@ -44,3 +44,17 @@ fn malformed_declarations() {
     let e = parse("map M = [1, 2];").unwrap_err();
     assert!(e.message.contains("map row string"), "{}", e.message);
 }
+
+#[test]
+fn palette_zone_declaration() {
+    let p = parse("palette_zone W = [\"0123\", \"..33\"]; var palette_zone: u8;").unwrap();
+    match &p.items[0] {
+        Decl::PaletteZone { name, rows, .. } => {
+            assert_eq!(name, "W");
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[1].0, "..33");
+        }
+        d => panic!("{d:?}"),
+    }
+    assert!(matches!(&p.items[1], Decl::Var { name, .. } if name == "palette_zone"));
+}

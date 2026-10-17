@@ -69,3 +69,30 @@ fn maze_hero_walks_collects_coins_and_never_glitches() {
     nes.run_frames(400).unwrap();
     assert_eq!(nes.bus.render_conflicts, 0);
 }
+
+#[test]
+fn runner_scrolls_through_the_level_without_glitches() {
+    let out = build(&example("runner"));
+    let mut nes = TestNes::from_ines(&out.rom).unwrap();
+    let u16v = |nes: &TestNes, n: &str| {
+        let a = out.vars[n].addr;
+        nes.peek(a) as u16 | (nes.peek(a + 1) as u16) << 8
+    };
+    nes.run_frames(10).unwrap();
+    let start_y = nes.peek(out.vars["hero.y"].addr);
+    assert!(start_y > 120 && start_y < 168, "hero landed on the ground: {start_y}");
+    // Run right, jumping now and then (pressing A every 20 frames).
+    let mut furthest = 0;
+    for f in 0..900u32 {
+        nes.set_buttons(0, if f % 20 < 10 { 0x81 } else { 0x01 });
+        nes.run_frames(1).unwrap();
+        furthest = furthest.max(u16v(&nes, "hero.x"));
+    }
+    assert!(furthest > 300, "hero ran past the first screen: {furthest}");
+    let cam = u16v(&nes, "cam");
+    assert_eq!(cam, 128 * 8 - 256, "camera reached the end of the level");
+    assert_eq!(nes.peek(out.vars["won"].addr), 1, "the flag was reached (x = {furthest})");
+    assert!(nes.peek(out.vars["score"].addr) > 0, "coins collected");
+    assert!(cam > 0, "camera followed");
+    assert_eq!(nes.bus.render_conflicts, 0);
+}

@@ -130,8 +130,8 @@ fn map_tile_reads_cells_and_returns_zero_out_of_bounds() {
 #[test]
 fn map_errors() {
     let m = |src: &str| errors(src)[0].message.clone();
-    let long_row = format!("map M = [\"{}\"]; fn main() {{}}", "#".repeat(33));
-    assert!(m(&long_row).contains("32"));
+    let long_row = format!("map M = [\"{}\"]; fn main() {{}}", "#".repeat(256));
+    assert!(m(&long_row).contains("255"));
     let many_rows = format!("map M = [{}]; fn main() {{}}", vec!["\"#\""; 31].join(","));
     assert!(m(&many_rows).contains("30"));
     assert!(m("const P: [u8] = [1]; fn main() { draw_map(P); }").contains("map"));
@@ -245,6 +245,6 @@ fn every_sfx_constant_compiles() {
 
 #[test]
 fn a_bad_map_reports_one_error_not_one_per_use() {
-    let errs = errors(&format!("map M = [\"{}\"]; fn main() {{ draw_map(M); draw_map(M); }}", "#".repeat(33)));
+    let errs = errors(&format!("map M = [\"{}\"]; fn main() {{ draw_map(M); draw_map(M); }}", "#".repeat(256)));
     assert_eq!(errs.len(), 1, "{errs:?}");
 }

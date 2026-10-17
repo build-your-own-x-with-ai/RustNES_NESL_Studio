@@ -51,6 +51,8 @@ pub enum Decl {
     Tile { index: Expr, rows: Vec<(String, Pos)>, pos: Pos },
     /// `map NAME = ["row", ...];` — a 32x30 background screen drawn from text.
     Map { name: String, rows: Vec<(String, Pos)>, pos: Pos },
+    /// `palette_zone MAP = ["0123", ...];` — background palette per 16x16 area of a map.
+    PaletteZone { name: String, rows: Vec<(String, Pos)>, pos: Pos },
     /// `metasprite NAME = [(dx, dy, tile[, attr]), ...];`
     Metasprite { name: String, parts: Vec<MetaPart>, pos: Pos },
     Fn(Function),

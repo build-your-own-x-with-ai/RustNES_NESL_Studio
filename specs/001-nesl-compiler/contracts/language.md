@@ -85,6 +85,7 @@ f(x, y);                               // 表达式语句
 
 > v2（[002-language-extensions](../../002-language-extensions/contracts/language.md)）新增：`struct`、`i8`、`[u16; N]` / `[i8; N]` 数组与常量表、局部数组、`match`。
 > v3（[003-game-api](../../003-game-api/contracts/api.md)）新增：VRAM 队列（随时 `print`）、`set_tile`、`map`、`metasprite`、`collide`、`sfx`。
+> v4（[004-scrolling](../../004-scrolling/contracts/api.md)）新增：最宽 255 列的地图、`camera_follow` / `camera_x`、`palette_zone`。
 
 ## 限制（v1）
 - 不支持递归、指针、结构体、有符号数、u16 数组、u16 乘除。

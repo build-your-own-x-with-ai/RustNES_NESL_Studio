@@ -100,8 +100,8 @@
   let errorLines = new Set(), romBytes = null, examples = [];
 
   // ---------------------------------------------------------------- editor
-  const KW = /^(fn|let|var|const|tile|map|metasprite|struct|match|if|else|while|loop|for|in|break|continue|return|as|true|false|u8|i8|u16)$/;
-  const BUILTIN = /^(wait_vblank|ppu_on|ppu_off|load_palette|vram_addr|vram_put|vram_fill|print|print_u8|sprite|hide_sprite|joypad|scroll|rand|frame_count|peek|poke|play_tone|stop_sound|set_tile|draw_map|map_tile|metasprite|collide|sfx)$/;
+  const KW = /^(fn|let|var|const|tile|map|metasprite|palette_zone|struct|match|if|else|while|loop|for|in|break|continue|return|as|true|false|u8|i8|u16)$/;
+  const BUILTIN = /^(wait_vblank|ppu_on|ppu_off|load_palette|vram_addr|vram_put|vram_fill|print|print_u8|sprite|hide_sprite|joypad|scroll|rand|frame_count|peek|poke|play_tone|stop_sound|set_tile|draw_map|map_tile|metasprite|collide|sfx|camera_follow|camera_x)$/;
   const TOKEN = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)|\b(0x[0-9a-fA-F_]+|0b[01_]+|\d[\d_]*)\b|([A-Za-z_]\w*)/g;
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 

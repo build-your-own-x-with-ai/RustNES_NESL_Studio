@@ -77,7 +77,9 @@ pub fn signature(name: &str) -> Option<Signature> {
         "poke" => sig!(U16, U8 => None),
         "play_tone" => sig!(U16 => None),
         "draw_map" => sig!(Map => None),
-        "map_tile" => sig!(Map, U8, U8 => U8),
+        "map_tile" => sig!(Map, U16, U8 => U8),
+        "camera_follow" => sig!(U16, Map => None),
+        "camera_x" => sig!(=> Some(Type::U16)),
         "metasprite" => sig!(U8, U8, U8, Meta => U8),
         "collide" => sig!(U8, U8, U8, U8, U8, U8, U8, U8 => U8),
         "sfx" => sig!(U8 => None),
@@ -206,14 +208,26 @@ impl Codegen {
                 self.slots(&list)?;
                 self.e.jsr("__sprite");
             }
+            "camera_x" => {
+                self.e.abs(LDA, CAM_X);
+                self.e.abs(LDX, CAM_X + 1);
+            }
+            "camera_follow" => {
+                let (label, width) = self.map_label(&args[1])?;
+                self.slots(&[(&args[0], Type::U16, ARG0)])?;
+                self.map_pointers(&label, width);
+                self.e.jsr("__camera_follow");
+            }
             "draw_map" => {
-                let label = self.map_label(&args[0])?;
-                self.pointer(&label);
+                let (label, width) = self.map_label(&args[0])?;
+                self.map_pointers(&label, width);
                 self.e.jsr("__draw_map");
             }
             "map_tile" => {
-                let label = self.map_label(&args[0])?;
-                self.slots(&[(&args[1], Type::U8, ARG0), (&args[2], Type::U8, ARG1)])?;
+                let (label, width) = self.map_label(&args[0])?;
+                self.slots(&[(&args[1], Type::U16, ARG0), (&args[2], Type::U8, ARG2)])?;
+                self.e.imm(LDA, width);
+                self.e.abs(STA, ARG3);
                 self.pointer(&label);
                 self.e.jsr("__map_tile");
             }
@@ -299,10 +313,22 @@ impl Codegen {
         r
     }
 
-    fn map_label(&self, e: &Expr) -> R<String> {
+    /// PTR = tiles, PTR2 = attributes, ARG2 = width.
+    fn map_pointers(&mut self, label: &str, width: u8) {
+        self.pointer(label);
+        let attrs = format!("{label}_a");
+        self.e.ins(LDA, Operand::imm_lo(&attrs));
+        self.e.abs(STA, PTR2);
+        self.e.ins(LDA, Operand::imm_hi(&attrs));
+        self.e.abs(STA, PTR2 + 1);
+        self.e.imm(LDA, width);
+        self.e.abs(STA, ARG2);
+    }
+
+    fn map_label(&self, e: &Expr) -> R<(String, u8)> {
         if let ExprKind::Var(n) = &e.kind {
-            if let Some(Sym::Map { label }) = self.lookup(n) {
-                return Ok(label);
+            if let Some(Sym::Map { label, width }) = self.lookup(n) {
+                return Ok((label, width));
             }
         }
         self.err(e.pos, "expected a map (declare one with `map NAME = [...]`)")
@@ -411,10 +437,20 @@ pub fn emit_runtime(e: &mut Emitter) {
 
     // TMP1:TMP0 = VRAM address, PTR = source, ARG2 = length (1-255).
     // Writes directly when rendering is off, otherwise queues 32-byte chunks for the NMI.
+    // `__vram_write_f` additionally takes TMP3 = $80 for a vertical (+32) write of <= 32 bytes.
     e.label("__vram_write");
+    e.imm(LDA, 0);
+    e.abs(STA, TMP3);
+    e.label("__vram_write_f");
     e.abs(LDA, MASK_SHADOW);
     e.imm(AND, 0x18);
     e.br(BNE, "__vw_queue");
+    e.abs(LDA, CTRL_SHADOW);
+    e.abs(BIT, TMP3);
+    e.br(BPL, "__vw_horiz");
+    e.imm(ORA, 0x04);
+    e.label("__vw_horiz");
+    e.abs(STA, PPUCTRL);
     e.abs(BIT, PPUSTATUS);
     e.abs(LDA, TMP1);
     e.abs(STA, PPUADDR);
@@ -467,11 +503,15 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.label("__vq_fits");
     e.abs(INC, VQ_LOCK);
     e.abs(LDX, VQ_LEN);
-    for src in [TMP1, TMP0, TMP2] {
+    for src in [TMP1, TMP0] {
         e.abs(LDA, src);
         e.ins(STA, Operand::abs_x(VQ));
         e.imp(INX);
     }
+    e.abs(LDA, TMP2);
+    e.abs(ORA, TMP3); // bit 7 of the length byte marks a vertical entry
+    e.ins(STA, Operand::abs_x(VQ));
+    e.imp(INX);
     e.imm(LDY, 0);
     e.label("__vq_copy");
     e.ins(LDA, Operand::IndY(PTR as u8));
@@ -496,8 +536,18 @@ pub fn emit_runtime(e: &mut Emitter) {
         e.abs(STA, PPUADDR);
         e.imp(INX);
     }
-    e.ins(LDY, Operand::abs_x(VQ));
+    e.ins(LDA, Operand::abs_x(VQ));
     e.imp(INX);
+    e.imp(TAY);
+    e.abs(LDA, CTRL_SHADOW);
+    e.imm(CPY, 0x80);
+    e.br(BCC, "__vqf_horiz");
+    e.imm(ORA, 0x04);
+    e.label("__vqf_horiz");
+    e.abs(STA, PPUCTRL);
+    e.imp(TYA);
+    e.imm(AND, 0x7F);
+    e.imp(TAY);
     e.label("__vqf_byte");
     e.ins(LDA, Operand::abs_x(VQ));
     e.abs(STA, PPUDATA);
@@ -508,6 +558,8 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.label("__vqf_done");
     e.imm(LDA, 0);
     e.abs(STA, VQ_LEN);
+    e.abs(LDA, CTRL_SHADOW);
+    e.abs(STA, PPUCTRL); // back to +1 increments
     e.imp(RTS);
 
     // ARG0 = x, ARG1 = y, ARG3 = tile
@@ -559,41 +611,159 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.imp(RTS);
 
     e.comment("---- runtime: maps ----");
-    // PTR = map. Draws nametable 0 with rendering off, restoring rendering afterwards.
+    // PTR += A * 30 (maps are column-major, 30 tiles per column).
+    e.label("__col_addr");
+    e.abs(STA, CA_LO);
+    e.imm(LDA, 0);
+    e.abs(STA, CA_HI);
+    e.abs(ASL, CA_LO);
+    e.abs(ROL, CA_HI);
+    e.abs(LDA, CA_LO);
+    e.abs(STA, SUB_LO);
+    e.abs(LDA, CA_HI);
+    e.abs(STA, SUB_HI); // col * 2
+    for _ in 0..4 {
+        e.abs(ASL, CA_LO);
+        e.abs(ROL, CA_HI);
+    } // col * 32
+    e.abs(LDA, CA_LO);
+    e.imp(SEC);
+    e.abs(SBC, SUB_LO);
+    e.abs(STA, CA_LO);
+    e.abs(LDA, CA_HI);
+    e.abs(SBC, SUB_HI);
+    e.abs(STA, CA_HI);
+    e.abs(LDA, PTR);
+    e.imp(CLC);
+    e.abs(ADC, CA_LO);
+    e.abs(STA, PTR);
+    e.abs(LDA, PTR + 1);
+    e.abs(ADC, CA_HI);
+    e.abs(STA, PTR + 1);
+    e.imp(RTS);
+
+    // A = world column. Writes it (30 tiles, vertically) into ring slot column % 64 of the
+    // two side-by-side nametables, directly or via the queue. Columns past the map are skipped.
+    e.label("__stream_col");
+    e.abs(CMP, MAP_W);
+    e.br(BCS, "__sc_skip");
+    e.abs(STA, SC_COL);
+    e.abs(LDX, MAP_T);
+    e.abs(STX, PTR);
+    e.abs(LDX, MAP_T + 1);
+    e.abs(STX, PTR + 1);
+    e.jsr("__col_addr");
+    e.abs(LDA, SC_COL);
+    e.imm(AND, 0x1F);
+    e.abs(STA, TMP0);
+    e.abs(LDA, SC_COL);
+    e.imm(AND, 0x20); // ring slots 32-63 live in the second nametable ($2400)
+    e.acc(LSR);
+    e.acc(LSR);
+    e.acc(LSR);
+    e.imm(ORA, 0x20);
+    e.abs(STA, TMP1);
+    e.imm(LDA, 30);
+    e.abs(STA, ARG2);
+    e.imm(LDA, 0x80);
+    e.abs(STA, TMP3);
+    e.jmp("__vram_write_f");
+    e.label("__sc_skip");
+    e.imp(RTS);
+
+    // A = attribute group (4 columns). Writes its 8 attribute bytes into ring group g % 16.
+    e.label("__attr_group");
+    e.abs(STA, AG);
+    e.imm(LDA, 0);
+    e.abs(STA, SC_R);
+    e.label("__ag_loop");
+    e.abs(LDA, AG);
+    e.abs(STA, CA_LO);
+    e.imm(LDA, 0);
+    e.abs(STA, CA_HI);
+    for _ in 0..3 {
+        e.abs(ASL, CA_LO);
+        e.abs(ROL, CA_HI);
+    }
+    e.abs(LDA, CA_LO);
+    e.imp(CLC);
+    e.abs(ADC, SC_R);
+    e.imp(CLC);
+    e.abs(ADC, MAP_A);
+    e.abs(STA, PTR);
+    e.abs(LDA, CA_HI);
+    e.abs(ADC, MAP_A + 1);
+    e.abs(STA, PTR + 1);
+    e.abs(LDA, SC_R);
+    e.acc(ASL);
+    e.acc(ASL);
+    e.acc(ASL);
+    e.abs(STA, TMP0);
+    e.abs(LDA, AG);
+    e.imm(AND, 0x07);
+    e.abs(ORA, TMP0);
+    e.imm(ORA, 0xC0);
+    e.abs(STA, TMP0);
+    e.abs(LDA, AG);
+    e.imm(AND, 0x08);
+    e.acc(LSR);
+    e.imm(ORA, 0x23);
+    e.abs(STA, TMP1);
+    e.imm(LDA, 1);
+    e.abs(STA, ARG2);
+    e.jsr("__vram_write");
+    e.abs(INC, SC_R);
+    e.abs(LDA, SC_R);
+    e.imm(CMP, 8);
+    e.br(BNE, "__ag_loop");
+    e.imp(RTS);
+
+    // PTR = tiles, PTR2 = attributes, ARG2 = width. Draws the first two screens with
+    // rendering off (restoring it afterwards) and resets the camera.
     e.label("__draw_map");
+    e.jsr("__set_map");
     e.abs(LDA, MASK_SHADOW);
     e.imp(PHA);
     e.br(BEQ, "__dm_off");
     e.jsr("__wait_vblank");
     e.jsr("__ppu_off");
     e.label("__dm_off");
-    e.abs(BIT, PPUSTATUS);
-    e.imm(LDA, 0x20);
-    e.abs(STA, PPUADDR);
-    e.imm(LDA, 0x00);
-    e.abs(STA, PPUADDR);
-    e.imm(LDX, 4); // 3 full pages + 192 bytes = 960
-    e.imm(LDY, 0);
-    e.label("__dm_loop");
-    e.imm(CPX, 1);
-    e.br(BNE, "__dm_byte");
-    e.imm(CPY, 192);
-    e.br(BEQ, "__dm_attr");
-    e.label("__dm_byte");
-    e.ins(LDA, Operand::IndY(PTR as u8));
-    e.abs(STA, PPUDATA);
-    e.imp(INY);
-    e.br(BNE, "__dm_loop");
-    e.abs(INC, PTR + 1);
-    e.imp(DEX);
-    e.jmp("__dm_loop");
-    e.label("__dm_attr");
     e.imm(LDA, 0);
-    e.imm(LDX, 64);
-    e.label("__dm_attr_loop");
-    e.abs(STA, PPUDATA);
-    e.imp(DEX);
-    e.br(BNE, "__dm_attr_loop");
+    e.abs(STA, SC_G);
+    e.label("__dm_col");
+    e.abs(LDA, SC_G);
+    e.imm(CMP, 64);
+    e.br(BCS, "__dm_cols_done");
+    e.jsr("__stream_col");
+    e.abs(INC, SC_G);
+    e.jmp("__dm_col");
+    e.label("__dm_cols_done");
+    e.abs(LDA, MAP_W); // groups = ceil(width / 4), at most 16 on screen
+    e.imp(CLC);
+    e.imm(ADC, 3);
+    e.acc(ROR);
+    e.acc(LSR);
+    e.abs(STA, NGROUPS);
+    e.imm(LDA, 0);
+    e.abs(STA, SC_G);
+    e.label("__dm_attr");
+    e.abs(LDA, SC_G);
+    e.abs(CMP, NGROUPS);
+    e.br(BCS, "__dm_attr_done");
+    e.imm(CMP, 16);
+    e.br(BCS, "__dm_attr_done");
+    e.jsr("__attr_group");
+    e.abs(INC, SC_G);
+    e.jmp("__dm_attr");
+    e.label("__dm_attr_done");
+    e.imm(LDA, 0);
+    e.abs(STA, CAM_X);
+    e.abs(STA, CAM_X + 1);
+    e.abs(STA, CAM_COL);
+    e.abs(STA, SCROLL_X);
+    e.abs(LDA, CTRL_SHADOW);
+    e.imm(AND, 0xFC);
+    e.abs(STA, CTRL_SHADOW);
     e.jsr("__fix_scroll");
     e.imp(PLA);
     e.br(BEQ, "__dm_done");
@@ -601,28 +771,160 @@ pub fn emit_runtime(e: &mut Emitter) {
     e.label("__dm_done");
     e.imp(RTS);
 
-    // PTR = map, ARG0 = tx, ARG1 = ty; returns the tile, or 0 when out of bounds.
-    e.label("__map_tile");
+    // ARG0:ARG1 = followed x, PTR / PTR2 / ARG2 = map. Moves the camera at most 8 px toward
+    // x - 120 (clamped to the map), streams in the newly visible column, then updates scroll.
+    e.label("__camera_follow");
+    e.abs(INC, VQ_LOCK); // the NMI keeps the previous scroll until we are done
+    e.jsr("__set_map");
+    // target = x - 120, clamped to [0, max]; max = width * 8 - 256 (TMP4:TMP5)
+    e.abs(LDA, ARG2);
+    e.imm(CMP, 33);
+    e.br(BCS, "__cf_wide");
+    e.jmp("__cf_done"); // a single screen never scrolls
+    e.label("__cf_wide");
+    e.imm(LDA, 0);
+    e.abs(STA, TMP5);
+    e.abs(LDA, ARG2);
+    for _ in 0..3 {
+        e.acc(ASL);
+        e.abs(ROL, TMP5);
+    }
+    e.abs(STA, TMP4);
+    e.abs(DEC, TMP5); // - 256
     e.abs(LDA, ARG0);
-    e.imm(CMP, 32);
-    e.br(BCS, "__mt_out");
+    e.imp(SEC);
+    e.imm(SBC, 120);
+    e.abs(STA, TMP0);
     e.abs(LDA, ARG1);
+    e.imm(SBC, 0);
+    e.abs(STA, TMP1);
+    e.br(BCS, "__cf_not_neg");
+    e.imm(LDA, 0);
+    e.abs(STA, TMP0);
+    e.abs(STA, TMP1);
+    e.label("__cf_not_neg");
+    e.abs(LDA, TMP4); // if max < target: target = max
+    e.abs(CMP, TMP0);
+    e.abs(LDA, TMP5);
+    e.abs(SBC, TMP1);
+    e.br(BCS, "__cf_clamped");
+    e.abs(LDA, TMP4);
+    e.abs(STA, TMP0);
+    e.abs(LDA, TMP5);
+    e.abs(STA, TMP1);
+    e.label("__cf_clamped");
+    // diff = target - cam; step limited to +-8
+    e.abs(LDA, TMP0);
+    e.imp(SEC);
+    e.abs(SBC, CAM_X);
+    e.abs(STA, TMP2);
+    e.abs(LDA, TMP1);
+    e.abs(SBC, CAM_X + 1);
+    e.br(BMI, "__cf_left");
+    e.br(BNE, "__cf_right_max"); // diff >= 256
+    e.abs(LDA, TMP2);
+    e.imm(CMP, 9);
+    e.br(BCC, "__cf_apply");
+    e.label("__cf_right_max");
+    e.imm(LDA, 8);
+    e.abs(STA, TMP2);
+    e.imm(LDA, 0);
+    e.jmp("__cf_apply_hi");
+    e.label("__cf_left");
+    e.imm(CMP, 0xFF);
+    e.br(BNE, "__cf_left_max"); // diff <= -256
+    e.abs(LDA, TMP2);
+    e.imm(CMP, 0xF8);
+    e.br(BCS, "__cf_apply_neg");
+    e.label("__cf_left_max");
+    e.imm(LDA, 0xF8);
+    e.abs(STA, TMP2);
+    e.label("__cf_apply_neg");
+    e.imm(LDA, 0xFF);
+    e.jmp("__cf_apply_hi");
+    e.label("__cf_apply");
+    e.imm(LDA, 0);
+    e.label("__cf_apply_hi");
+    e.abs(STA, TMP3);
+    e.abs(LDA, CAM_X);
+    e.imp(CLC);
+    e.abs(ADC, TMP2);
+    e.abs(STA, CAM_X);
+    e.abs(LDA, CAM_X + 1);
+    e.abs(ADC, TMP3);
+    e.abs(STA, CAM_X + 1);
+    // new camera column = cam >> 3
+    e.abs(LDA, CAM_X + 1);
+    e.abs(STA, TMP1);
+    e.abs(LDA, CAM_X);
+    for _ in 0..3 {
+        e.abs(LSR, TMP1);
+        e.acc(ROR);
+    }
+    e.abs(CMP, CAM_COL);
+    e.br(BEQ, "__cf_scroll");
+    e.abs(LDX, CAM_COL);
+    e.abs(STA, CAM_COL);
+    e.imp(TXA);
+    e.abs(CMP, CAM_COL);
+    e.br(BCS, "__cf_went_left");
+    // moved right: column cam_col + 32 just came into view
+    e.abs(LDA, CAM_COL);
+    e.imp(CLC);
+    e.imm(ADC, 32);
+    e.jmp("__cf_stream");
+    e.label("__cf_went_left");
+    e.abs(LDA, CAM_COL);
+    e.label("__cf_stream");
+    e.imp(PHA);
+    e.jsr("__stream_col");
+    e.imp(PLA);
+    e.abs(STA, SC_G);
+    e.imm(AND, 0x03);
+    e.br(BNE, "__cf_scroll"); // attributes change only at 4-column group boundaries
+    e.abs(LDA, SC_G);
+    e.acc(LSR);
+    e.acc(LSR);
+    e.jsr("__attr_group");
+    e.label("__cf_scroll");
+    // scroll x = cam & 255, nametable select bit = (cam >> 8) & 1
+    e.abs(LDA, CAM_X);
+    e.abs(STA, SCROLL_X);
+    e.abs(LDA, CAM_X + 1);
+    e.imm(AND, 0x01);
+    e.abs(STA, TMP0);
+    e.abs(LDA, CTRL_SHADOW);
+    e.imm(AND, 0xFE);
+    e.abs(ORA, TMP0);
+    e.abs(STA, CTRL_SHADOW);
+    e.abs(LDA, MASK_SHADOW);
+    e.br(BNE, "__cf_done");
+    e.jsr("__fix_scroll"); // rendering off: apply now (no NMI does it for us)
+    e.label("__cf_done");
+    e.abs(DEC, VQ_LOCK);
+    e.imp(RTS);
+
+    // Remembers the map passed in PTR / PTR2 / ARG2 as the one being drawn or followed.
+    e.label("__set_map");
+    for (src, dst) in [(PTR, MAP_T), (PTR + 1, MAP_T + 1), (PTR2, MAP_A), (PTR2 + 1, MAP_A + 1), (ARG2, MAP_W)] {
+        e.abs(LDA, src);
+        e.abs(STA, dst);
+    }
+    e.imp(RTS);
+
+    // PTR = tiles, ARG0:ARG1 = tx, ARG2 = ty, ARG3 = width; returns the tile or 0 outside.
+    e.label("__map_tile");
+    e.abs(LDA, ARG1);
+    e.br(BNE, "__mt_out");
+    e.abs(LDA, ARG0);
+    e.abs(CMP, ARG3);
+    e.br(BCS, "__mt_out");
+    e.abs(LDA, ARG2);
     e.imm(CMP, 30);
     e.br(BCS, "__mt_out");
-    // PTR += ty * 32
-    e.imm(LDX, 0);
-    e.abs(STX, TMP1);
-    for _ in 0..5 {
-        e.acc(ASL);
-        e.abs(ROL, TMP1);
-    }
-    e.imp(CLC);
-    e.abs(ADC, PTR);
-    e.abs(STA, PTR);
-    e.abs(LDA, TMP1);
-    e.abs(ADC, PTR + 1);
-    e.abs(STA, PTR + 1);
-    e.abs(LDY, ARG0);
+    e.abs(LDA, ARG0);
+    e.jsr("__col_addr");
+    e.abs(LDY, ARG2);
     e.ins(LDA, Operand::IndY(PTR as u8));
     e.imp(RTS);
     e.label("__mt_out");

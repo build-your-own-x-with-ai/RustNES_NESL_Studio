@@ -57,11 +57,13 @@ cargo build --release
 | 地图 | `map LEVEL = ["####", "#..#", ...];` → `draw_map(LEVEL)`、`map_tile(LEVEL, tx, ty)` |
 | 元精灵 | `metasprite HERO = [(0,0,1), (8,0,2), (0,8,3), (8,8,4)];` → `metasprite(slot, x, y, HERO)` |
 | 碰撞 / 音效 | `collide(ax, ay, aw, ah, bx, by, bw, bh)`、`sfx(SFX_JUMP)`（JUMP/COIN/SHOOT/HIT/EXPLODE） |
+| 横向卷轴 | 地图最宽 255 列；`camera_follow(hero.x, WORLD)` 跟随并自动补画，`camera_x()` 换算屏幕坐标；`palette_zone WORLD = [...]` 分区配色 |
 | NES API | `wait_vblank ppu_on ppu_off load_palette vram_addr vram_put vram_fill print print_u8 sprite hide_sprite joypad scroll rand frame_count peek poke play_tone stop_sound`，按键常量 `BTN_A…BTN_RIGHT` |
 
 完整参考：[`specs/001-nesl-compiler/contracts/language.md`](specs/001-nesl-compiler/contracts/language.md)，
 v2 新增内容见 [`specs/002-language-extensions/contracts/language.md`](specs/002-language-extensions/contracts/language.md)，
-游戏开发 API 见 [`specs/003-game-api/contracts/api.md`](specs/003-game-api/contracts/api.md)。
+游戏开发 API 见 [`specs/003-game-api/contracts/api.md`](specs/003-game-api/contracts/api.md)，
+卷轴见 [`specs/004-scrolling/contracts/api.md`](specs/004-scrolling/contracts/api.md)。
 内置 8×8 ASCII 字体，`print` 无需任何素材即可显示文字。
 
 > 硬件提示：`print`、`set_tile`、`load_palette` 可在任何时刻调用；只有底层的 `vram_addr` / `vram_put` / `vram_fill` 仍需在 `ppu_off()` 期间使用。
@@ -72,7 +74,7 @@ v2 新增内容见 [`specs/002-language-extensions/contracts/language.md`](specs
 crates/nes-sim   6502 CPU（通过 nestest 全部 5003 行官方指令校验）+ 简化 NES 测试机
 crates/nesl      编译器库：lexer → parser → codegen → assembler → CHR/iNES
 crates/nesc      CLI 与浏览器编辑器（std-only HTTP 服务 + web/index.html）
-examples/        hello / sprite / game（接星星）/ shooter（struct + i8 + match）/ maze（地图 + 元精灵 + 碰撞 + 音效）
+examples/        hello / sprite / game（接星星）/ shooter（struct + i8 + match）/ maze（地图 + 元精灵 + 碰撞 + 音效）/ runner（4 屏横版跳跃）
 specs/00x-…      Spec Kit 文档：spec.md（需求）plan.md（计划）tasks.md（实现任务）等
 ```
 

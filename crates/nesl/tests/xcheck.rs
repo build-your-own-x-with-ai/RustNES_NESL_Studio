@@ -188,6 +188,7 @@ fn scrolled_level_with_status_bar_matches_jsnes() {
             draw_map(W);
             status_bar(4);
             print(1, 1, \"SCORE 123\");
+            print(1, 3, \"LEVEL 1-1 WORLD MAP TEST\"); // last bar row: a mistimed split shows here
             set_map_tile(W, 90, 12, '#');
             ppu_on();
             loop {{

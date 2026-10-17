@@ -14,7 +14,7 @@ description: "Task list for editable maps and the status bar"
 
 ## Phase 2: Foundational
 
-- [ ] T602 测试 + 实现：测试机 sprite-0 碰撞与 `$2000/$2005` 写入日志 `crates/nes-sim`
+- [x] T602 测试 + 实现：测试机 sprite-0 碰撞与 `$2000/$2005` 写入日志 `crates/nes-sim`
 - [ ] T603 共享测试辅助函数（宽地图、命名表读取）移到 `crates/nesl/tests/common/mod.rs`
 
 ## Phase 3: US1 改写地图 (P1) 🎯 MVP

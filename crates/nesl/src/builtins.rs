@@ -54,7 +54,7 @@ pub enum Param {
 
 /// A resolved map argument of a built-in.
 pub(crate) enum MapArg {
-    Static { label: String, width: u8, id: u8 },
+    Static { label: String, width: u8, id: u8, bank: u8 },
     /// Chosen at run time from a map list; the id is on the stack until `map_select`.
     Dynamic,
 }
@@ -279,11 +279,13 @@ impl Codegen {
             "camera_follow" => {
                 let m = self.map_arg(&args[1])?;
                 self.slots(&[(&args[0], Type::U16, ARG0)])?;
+                self.map_bank(&m);
                 self.map_setup(&m);
                 self.e.jsr("__camera_follow");
             }
             "draw_map" => {
                 let m = self.map_arg(&args[0])?;
+                self.map_bank(&m);
                 self.map_setup(&m);
                 self.e.jsr("__draw_map");
             }
@@ -291,6 +293,7 @@ impl Codegen {
                 let m = self.map_arg(&args[0])?;
                 self.slots(&[(&args[1], Type::U16, ARG0), (&args[2], Type::U8, ARG2)])?;
                 self.map_select(&m);
+                self.map_bank(&m);
                 self.map_ptrs(&m);
                 self.map_byte(&m, false, ARG3);
                 self.map_byte(&m, true, ARG4);
@@ -450,13 +453,13 @@ impl Codegen {
     fn map_arg(&mut self, e: &Expr) -> R<MapArg> {
         let static_map = |cg: &Self, id: u8, pos: Pos| -> R<MapArg> {
             match cg.map_table.get(id.wrapping_sub(1) as usize) {
-                Some((label, width)) => Ok(MapArg::Static { label: label.clone(), width: *width, id }),
+                Some((label, width, bank)) => Ok(MapArg::Static { label: label.clone(), width: *width, id, bank: *bank }),
                 None => cg.err(pos, "this map has errors"),
             }
         };
         match &e.kind {
             ExprKind::Var(n) => match self.lookup(n) {
-                Some(Sym::Map { label, width, id }) => return Ok(MapArg::Static { label, width, id }),
+                Some(Sym::Map { label, width, id, bank }) => return Ok(MapArg::Static { label, width, id, bank }),
                 Some(Sym::MapList { .. }) => {
                     return self.err(e.pos, format!("`{n}` is a list of maps; pass one of them with `{n}[i]`"))
                 }
@@ -513,10 +516,27 @@ impl Codegen {
     /// Stores the map's id (`id = true`) or width into `dst`.
     fn map_byte(&mut self, m: &MapArg, id: bool, dst: u16) {
         match m {
-            MapArg::Static { width, id: n, .. } => self.e.imm(LDA, if id { *n } else { *width }),
+            MapArg::Static { width, id: n, bank: _, .. } => self.e.imm(LDA, if id { *n } else { *width }),
             MapArg::Dynamic => self.e.abs(LDA, if id { SEL_ID } else { SEL_W }),
         }
         self.e.abs(STA, dst);
+    }
+
+    /// Switches to the map's bank in banked mode (does nothing in NROM).
+    fn map_bank(&mut self, m: &MapArg) {
+        if !self.banked {
+            return;
+        }
+        match m {
+            MapArg::Static { bank, .. } => {
+                self.e.imm(LDA, *bank);
+                self.e.jsr("__bank");
+            }
+            MapArg::Dynamic => {
+                self.e.abs(LDA, SEL_BANK);
+                self.e.jsr("__bank");
+            }
+        }
     }
 
     /// PTR = tiles, PTR2 = attributes, ARG2 = width, ARG3 = map id.

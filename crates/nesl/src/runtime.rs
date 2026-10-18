@@ -39,6 +39,8 @@ pub const SMT_W: u16 = 0x0360;
 /// Map chosen through a map list (`L[i]`): its id and width, set by `__map_sel`.
 pub const SEL_ID: u16 = 0x0361;
 pub const SEL_W: u16 = 0x0362;
+/// Map's bank number for dynamic map list selection (banked mode only).
+pub const SEL_BANK: u16 = 0x0363;
 /// Non-zero while the main program is appending to the queue; NMI then skips the flush.
 pub const VQ_LOCK: u16 = 0x0363;
 // Sound effect state, advanced once per frame by the NMI.
@@ -150,7 +152,48 @@ impl Emitter {
 }
 
 /// Emits reset, NMI and IRQ handlers. `__init_globals` and `f_main` are provided by codegen.
-pub fn emit_core(e: &mut Emitter) {
+/// Emits __bank(A) and __chr_copy for UNROM mapper 2.
+pub fn emit_banked(e: &mut Emitter) {
+    use crate::asm::{Item, Op::*, Operand, Val};
+    
+    e.comment("---- UNROM bank switching ----");
+    e.label("__bank");
+    // Bus-conflict-safe: writes to __bank_table+A where ROM[addr]=A
+    e.imp(TAX);
+    e.ins(STA, Operand::AbsX(Val::Label("__bank_table".into(), 0)));
+    e.imp(RTS);
+    
+    // Bank table: 16 bytes where byte N = N
+    e.label("__bank_table");
+    e.items.push(Item::Bytes((0..16u8).collect()));
+    
+    // Copy 8KB CHR data from bank 0 at $8000 into PPU $0000-$1FFF
+    e.comment("---- CHR copy (bank 0 -> CHR-RAM) ----");
+    e.label("__chr_copy");
+    e.imm(LDA, 0); // select bank 0
+    e.jsr("__bank");
+    e.imm(LDA, 0x20); // PPU ctrl: increment by 1
+    e.abs(STA, PPUCTRL);
+    e.imm(LDA, 0);
+    e.abs(STA, PPUADDR);
+    e.abs(STA, PPUADDR); // PPU addr = $0000
+    e.imm(LDX, 0);
+    e.imm(LDY, 0x20); // copy $2000 bytes = 32 pages
+    e.abs(STA, PTR);
+    e.imm(LDA, 0x80); // source = $8000
+    e.abs(STA, PTR + 1);
+    e.label("__chr_loop");
+    e.ins(LDA, Operand::IndY(0));
+    e.abs(STA, PPUDATA);
+    e.imp(INX);
+    e.br(BNE, "__chr_loop");
+    e.ins(INC, Operand::Abs(Val::Num(PTR + 1)));
+    e.imp(DEY);
+    e.br(BNE, "__chr_loop");
+    e.imp(RTS);
+}
+
+pub fn emit_core(e: &mut Emitter, banked: bool) {
     e.comment("---- runtime: reset ----");
     e.label("__reset");
     e.imp(SEI);
@@ -188,6 +231,7 @@ pub fn emit_core(e: &mut Emitter) {
     e.abs(STA, CTRL_SHADOW);
     e.abs(STA, LAST_CTRL);
     e.abs(STA, PPUCTRL);
+    if banked { e.jsr("__chr_copy"); }
     e.jsr("__init_globals");
     e.jsr("f_main");
     e.label("__halt");

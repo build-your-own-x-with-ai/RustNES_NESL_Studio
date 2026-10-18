@@ -82,5 +82,5 @@ pub fn compile(src: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
     let sym = |n: &str| asm.symbols[n];
     let rom = rom::build_ines(&asm.code, sym("__nmi"), sym("__reset"), sym("__irq"), &chr)
         .map_err(|m| vec![Diagnostic::new(top, m)])?;
-    Ok(CompileOutput { rom, prg_used: asm.code.len(), symbols: asm.symbols, vars: cg.vars, listing: asm.listing })
+    Ok(CompileOutput { rom, prg_used: asm.code.len(), mapper: 0, symbols: asm.symbols, vars: cg.vars, listing: asm.listing })
 }

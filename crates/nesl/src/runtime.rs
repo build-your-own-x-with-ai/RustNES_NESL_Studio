@@ -172,7 +172,7 @@ pub fn emit_banked(e: &mut Emitter) {
     e.label("__chr_copy");
     e.imm(LDA, 0); // select bank 0
     e.jsr("__bank");
-    e.imm(LDA, 0x20); // PPU ctrl: increment by 1
+    e.imm(LDA, 0); // PPUCTRL: +1 increments, NMI still off
     e.abs(STA, PPUCTRL);
     e.imm(LDA, 0);
     e.abs(STA, PPUADDR);

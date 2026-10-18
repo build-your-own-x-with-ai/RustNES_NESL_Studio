@@ -516,7 +516,7 @@ impl Codegen {
     /// Stores the map's id (`id = true`) or width into `dst`.
     fn map_byte(&mut self, m: &MapArg, id: bool, dst: u16) {
         match m {
-            MapArg::Static { width, id: n, bank: _, .. } => self.e.imm(LDA, if id { *n } else { *width }),
+            MapArg::Static { width, id: n, .. } => self.e.imm(LDA, if id { *n } else { *width }),
             MapArg::Dynamic => self.e.abs(LDA, if id { SEL_ID } else { SEL_W }),
         }
         self.e.abs(STA, dst);

@@ -9,8 +9,8 @@ fn unrom4() -> Vec<u8> {
     for b in 0..4u8 {
         let mut bank = vec![b * 0x11; 0x4000];
         // bus-conflict-safe bank table at $8000: ROM[i] = i for i in 0..16
-        for i in 0..16 {
-            bank[i] = i as u8;
+        for (i, v) in bank.iter_mut().take(16).enumerate() {
+            *v = i as u8;
         }
         rom.extend_from_slice(&bank);
     }

@@ -85,7 +85,7 @@ pub fn compile(src: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
     // Try NROM assembly at $8000
     let asm_nrom = asm::assemble(&cg_temp.e.items, 0x8000);
     let use_unrom = if let Ok(asm) = &asm_nrom {
-        asm.code.len() + chr.len() > 32762
+        asm.code.len() > 32762 // CHR is a separate 8KB chip in NROM
     } else {
         true // assembly failed, might be due to size
     };
@@ -135,7 +135,7 @@ fn compile_unrom(prog: &ast::Program, chr: &[u8]) -> Result<CompileOutput, Vec<D
     }
     
     let sym = |n: &str| fixed_asm.symbols[n];
-    let rom = rom::build_unrom(banks, &fixed_asm.code, sym("__nmi"), sym("__reset"), sym("__irq"), chr)
+    let rom = rom::build_unrom(banks, &fixed_asm.code, sym("__nmi"), sym("__reset"), sym("__irq"))
         .map_err(|m| vec![Diagnostic::new(top, m)])?;
     
     Ok(CompileOutput {

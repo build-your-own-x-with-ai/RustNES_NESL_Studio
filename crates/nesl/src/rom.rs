@@ -8,7 +8,7 @@ pub const HEADER_SIZE: usize = 16;
 /// interrupt vectors at $FFFA, and wraps it with `chr` into an iNES file.
 /// Builds an iNES ROM for UNROM (mapper 2) with multiple PRG banks and CHR-RAM.
 /// `banks` contains switchable 16KB banks; `fixed` is the last 16KB bank.
-pub fn build_unrom(banks: Vec<Vec<u8>>, fixed: &[u8], nmi: u16, reset: u16, irq: u16, chr: &[u8]) -> Result<Vec<u8>, String> {
+pub fn build_unrom(banks: Vec<Vec<u8>>, fixed: &[u8], nmi: u16, reset: u16, irq: u16) -> Result<Vec<u8>, String> {
     if banks.is_empty() || banks.len() > 16 {
         return Err(format!("UNROM requires 1-16 banks, got {}", banks.len()));
     }
@@ -38,24 +38,20 @@ pub fn build_unrom(banks: Vec<Vec<u8>>, fixed: &[u8], nmi: u16, reset: u16, irq:
         rom.resize(rom.len() + (0x4000 - bank.len()), 0); // pad to 16KB
     }
     
-    // Fixed bank (last one)
-    let mut fixed_bank = fixed.to_vec();
-    fixed_bank.resize(0x4000, 0);
-    // Write vectors at the end
-    let vec_offset = 0x4000 - 6;
-    fixed_bank[vec_offset] = (nmi & 0xFF) as u8;
-    fixed_bank[vec_offset + 1] = (nmi >> 8) as u8;
-    fixed_bank[vec_offset + 2] = (reset & 0xFF) as u8;
-    fixed_bank[vec_offset + 3] = (reset >> 8) as u8;
-    fixed_bank[vec_offset + 4] = (irq & 0xFF) as u8;
-    fixed_bank[vec_offset + 5] = (irq >> 8) as u8;
-    rom.extend_from_slice(&fixed_bank);
-    
-    // Pad to power-of-2 banks
+    // Pad with empty switchable banks so the fixed bank is the last of a power of two
     for _ in bank_count..prg_banks {
         rom.resize(rom.len() + 0x4000, 0);
     }
-    
+
+    // Fixed bank (must be last: the CPU always sees it at $C000-$FFFF)
+    let mut fixed_bank = fixed.to_vec();
+    fixed_bank.resize(0x4000, 0);
+    let vec_offset = 0x4000 - 6;
+    fixed_bank[vec_offset..].copy_from_slice(&[
+        nmi as u8, (nmi >> 8) as u8, reset as u8, (reset >> 8) as u8, irq as u8, (irq >> 8) as u8,
+    ]);
+    rom.extend_from_slice(&fixed_bank);
+
     Ok(rom)
 }
 

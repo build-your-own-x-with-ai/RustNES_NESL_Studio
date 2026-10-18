@@ -481,7 +481,7 @@ impl Codegen {
         
         for (i, (_, width, _)) in self.map_table.iter().enumerate() {
             let tiles_size = (*width as usize) * 30;
-            let attrs_size = ((*width as usize + 3) / 4) * 8;
+            let attrs_size = (*width as usize).div_ceil(4) * 8;
             let map_size = tiles_size + attrs_size;
             
             // Find first bank with space, or create new one
@@ -515,7 +515,7 @@ impl Codegen {
         // Update bank in global symbols
         for (map_idx, bank) in assignments {
             let map_id = (map_idx + 1) as u8;
-            for (_, sym) in self.globals.iter_mut() {
+            for sym in self.globals.values_mut() {
                 if let Sym::Map { id, bank: b, .. } = sym {
                     if *id == map_id {
                         *b = bank as u8;
@@ -1961,7 +1961,8 @@ impl Codegen {
         
         
         // Group maps by bank
-        let mut bank_maps: std::collections::BTreeMap<u8, Vec<(String, Vec<u8>, Vec<u8>)>> = std::collections::BTreeMap::new();
+        type MapData = (String, Vec<u8>, Vec<u8>); // (label, tiles, attributes)
+        let mut bank_maps: std::collections::BTreeMap<u8, Vec<MapData>> = std::collections::BTreeMap::new();
         
         for (label, _, bank) in &self.map_table {
             // Find the map declaration to get tiles and attrs
@@ -1978,7 +1979,7 @@ impl Codegen {
         let mut banks = vec![chr.to_vec()]; // bank 0 starts with CHR
         let max_bank = *self.map_table.iter().map(|(_, _, b)| b).max().unwrap_or(&0);
         
-        for b in 1..=max_bank {
+        for _ in 1..=max_bank {
             banks.push(Vec::new());
         }
 

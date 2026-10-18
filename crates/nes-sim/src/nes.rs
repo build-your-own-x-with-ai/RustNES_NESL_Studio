@@ -40,6 +40,8 @@ pub struct NesBus {
     /// `(cycle, kind, value)` for every PPUCTRL / PPUSCROLL write:
     /// kind 0 = `$2000`, 1 = `$2005` x, 2 = `$2005` y.
     pub reg_log: Vec<(u64, u8, u8)>,
+    /// Mapper 2 bus conflicts (write value != ROM byte).
+    pub bus_conflicts: usize,
     oam_addr: u8,
     write_toggle: bool,
     ppu_addr: u16,
@@ -68,6 +70,7 @@ impl NesBus {
             sprite0_at: None,
             sprite0_clear: 0,
             reg_log: Vec::new(),
+            bus_conflicts: 0,
             oam_addr: 0,
             write_toggle: false,
             ppu_addr: 0,
@@ -295,6 +298,16 @@ pub struct TestNes {
 }
 
 impl TestNes {
+    /// Side-effect-free peek (through the CPU read path).
+    pub fn peek(&self, addr: u16) -> u8 {
+        self.bus.peek(addr)
+    }
+
+    /// Side-effectful write (through the CPU write path).
+    pub fn poke(&mut self, addr: u16, val: u8) {
+        self.bus.write(addr, val);
+    }
+
     /// Parses an iNES image (mapper 0 only), loads PRG/CHR and resets the CPU.
     pub fn from_ines(rom: &[u8]) -> Result<TestNes, String> {
         if rom.len() < 16 || &rom[0..4] != b"NES\x1A" {

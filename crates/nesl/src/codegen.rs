@@ -64,6 +64,7 @@ pub struct Codegen {
     has_map_lists: bool,
     /// Compile in banked mode (UNROM): maps go in switchable banks, not inline data.
     pub(crate) banked: bool,
+    declared_maps: Vec<(String, Vec<u8>, Vec<u8>)>,
     scopes: Vec<HashMap<String, Sym>>,
     /// (continue label, break label) for each enclosing loop.
     loops: Vec<(String, String)>,
@@ -195,6 +196,7 @@ impl Codegen {
             map_table: Vec::new(),
             has_map_lists: false,
             banked: false,
+            declared_maps: Vec::new(),
             scopes: Vec::new(),
             loops: Vec::new(),
             cur_ret: None,
@@ -525,7 +527,7 @@ impl Codegen {
     }
 
 
-    /// `__map_sel`: A = map id -> PTR = tiles, PTR2 = attributes, SEL_ID, SEL_W.
+    /// `__map_sel`: A = map id -> PTR = tiles, PTR2 = attributes, SEL_ID, SEL_W, SEL_BANK.
     /// An invalid id (0 or past the last map) selects map 1.
     fn emit_map_select(&mut self) {
         use crate::asm::{Item, Val};
@@ -553,6 +555,10 @@ impl Codegen {
         self.e.abs(LDX, runtime::SEL_ID);
         self.e.ins(LDA, Operand::AbsX(Val::Label("__map_tab_w".into(), -1)));
         self.e.abs(STA, runtime::SEL_W);
+        if self.banked {
+            self.e.ins(LDA, Operand::AbsX(Val::Label("__map_tab_b".into(), -1)));
+            self.e.abs(STA, runtime::SEL_BANK);
+        }
         self.e.imp(RTS);
         let tiles = self.map_table.iter().map(|(l, _, _)| Val::Label(l.clone(), 0)).collect();
         let attrs = self.map_table.iter().map(|(l, _, _)| Val::Label(format!("{l}_a"), 0)).collect();
@@ -563,7 +569,13 @@ impl Codegen {
         self.e.items.push(Item::Words(attrs));
         self.e.label("__map_tab_w");
         self.e.items.push(Item::Bytes(widths));
+        if self.banked {
+            let banks: Vec<u8> = self.map_table.iter().map(|(_, _, b)| *b).collect();
+            self.e.label("__map_tab_b");
+            self.e.items.push(Item::Bytes(banks));
+        }
     }
+
 
     fn const_expr(&self, e: &Expr, what: &str) -> R<i64> {
         self.const_val(e).ok_or_else(|| Diagnostic::new(e.pos, format!("{what} must be a constant expression")))
@@ -664,6 +676,7 @@ impl Codegen {
                 let id = self.map_count;
                 self.globals.insert(name.clone(), Sym::Map { label: label.clone(), width: width as u8, id, bank: 0 });
                 self.map_table.push((label.clone(), width as u8, 0)); // bank assigned later
+                self.declared_maps.push((label.clone(), tiles.clone(), attrs.clone()));
                 if !self.banked {
                     self.data.push((format!("{label}_a"), attrs));
                     self.data.push((label, tiles));
@@ -1940,5 +1953,56 @@ impl Codegen {
         self.e.label(&brk);
         Ok(())
     }
+
+    /// Emits banked map data: Equ symbols for the fixed bank, actual data in switchable banks.
+    /// Returns (switchable_banks, chr_data).
+    pub fn emit_banked_maps(&mut self, chr: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
+        use crate::asm::Item;
+        
+        
+        // Group maps by bank
+        let mut bank_maps: std::collections::BTreeMap<u8, Vec<(String, Vec<u8>, Vec<u8>)>> = std::collections::BTreeMap::new();
+        
+        for (label, _, bank) in &self.map_table {
+            // Find the map declaration to get tiles and attrs
+            for item in &self.declared_maps {
+                if &item.0 == label {
+                    let (_, tiles, attrs) = item;
+                    bank_maps.entry(*bank).or_default().push((label.clone(), tiles.clone(), attrs.clone()));
+                    break;
+                }
+            }
+        }
+        
+        // Build banks
+        let mut banks = vec![chr.to_vec()]; // bank 0 starts with CHR
+        let max_bank = *self.map_table.iter().map(|(_, _, b)| b).max().unwrap_or(&0);
+        
+        for b in 1..=max_bank {
+            banks.push(Vec::new());
+        }
+
+        
+        for (bank_idx, maps) in bank_maps {
+            let bank = &mut banks[bank_idx as usize];
+            // All banks start at $8000 in the switchable region
+            let base_addr = 0x8000u16;
+            let mut offset = if bank_idx == 0 { chr.len() } else { 0 };
+            
+            for (label, tiles, attrs) in maps {
+                // Emit Equ for tiles and attrs pointing to this bank's addresses
+                self.e.items.push(Item::Equ(format!("{label}_a"), base_addr + offset as u16));
+                bank.extend_from_slice(&attrs);
+                offset += attrs.len();
+                
+                self.e.items.push(Item::Equ(label.clone(), base_addr + offset as u16));
+                bank.extend_from_slice(&tiles);
+                offset += tiles.len();
+            }
+        }
+        
+        (banks, chr.to_vec())
+    }
+
 
 }

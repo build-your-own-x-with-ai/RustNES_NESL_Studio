@@ -65,7 +65,7 @@ fn small_programs_still_use_nrom() {
 
 #[test]
 fn chr_data_is_copied_into_vram() {
-    let src = format!("{} tile 5 = [\"11111111\",\"22222222\",\"33333333\",\"44444444\",\"55555555\",\"66666666\",\"77777777\",\"88888888\"];
+    let src = format!("{} tile 5 = [\"11111111\",\"22222222\",\"33333333\",\"........\",\"11111111\",\"22222222\",\"33333333\",\"........\"];
         fn main() {{ draw_map(M0); }}", big_maps());
     let out = nesl::compile(&src).unwrap();
     let mut nes = nes_sim::TestNes::from_ines(&out.rom).unwrap();

@@ -59,6 +59,8 @@ pub enum Item {
     Bytes(Vec<u8>),
     /// Little-endian 16-bit words.
     Words(Vec<Val>),
+    /// Define a symbol at a fixed address without emitting bytes.
+    Equ(String, u16),
     Comment(String),
 }
 
@@ -239,7 +241,12 @@ pub fn assemble(items: &[Item], origin: u16) -> Result<Assembled, String> {
                 Item::Branch(..) => pc += if long[i] { 5 } else { 2 },
                 Item::Bytes(b) => pc += b.len() as u32,
                 Item::Words(w) => pc += 2 * w.len() as u32,
-                Item::Comment(_) => {}
+                Item::Equ(name, addr) => {
+                    if symbols.insert(name.clone(), *addr).is_some() {
+                        return Err(format!("duplicate label `{name}`"));
+                    }
+                }
+            Item::Comment(_) => {}
             }
             if pc > 0x10000 {
                 return Err("program does not fit in the address space".into());
@@ -272,6 +279,10 @@ pub fn assemble(items: &[Item], origin: u16) -> Result<Assembled, String> {
         let text = match it {
             Item::Label(l) => {
                 let _ = writeln!(listing, "{l}:");
+                continue;
+            }
+            Item::Equ(name, addr) => {
+                let _ = writeln!(listing, "{name} = ${addr:04X}");
                 continue;
             }
             Item::Comment(c) => {

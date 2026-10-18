@@ -52,6 +52,8 @@ pub struct CompileOutput {
     pub vars: std::collections::BTreeMap<String, VarInfo>,
     pub listing: String,
     pub prg_used: usize,
+    /// 0 (NROM) or 2 (UNROM).
+    pub mapper: u8,
 }
 
 /// Compiles NESL source into an iNES ROM image.

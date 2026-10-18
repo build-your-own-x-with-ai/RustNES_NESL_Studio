@@ -74,3 +74,34 @@ fn chr_data_is_copied_into_vram() {
     assert_eq!(nes.bus.vram[5 * 16], 0xFF, "tile 5 plane 0 row 0");
     assert_eq!(nes.bus.vram[5 * 16 + 8], 0x00, "tile 5 plane 1 row 0");
 }
+
+#[test]
+fn bank_counts_that_need_padding_keep_the_fixed_bank_last() {
+    // 11 maps -> 4 switchable banks + fixed = 5, padded to 8 PRG banks
+    let mut src = String::new();
+    for i in 0..11 {
+        src.push_str(&wide_map(&format!("M{i}"), 128));
+    }
+    src.push_str("var a: u8; var b: u8; fn main() { draw_map(M10); a = map_tile(M10, 50, 2); b = map_tile(M0, 7, 3); }");
+    let out = nesl::compile(&src).unwrap();
+    assert_eq!(out.mapper, 2);
+    assert_eq!(out.rom[4], 8, "PRG banks rounded up to a power of two");
+    let mut nes = nes_sim::TestNes::from_ines(&out.rom).unwrap();
+    nes.run_frames(10).unwrap();
+    assert_eq!(nes.peek(out.vars["a"].addr), cell(50, 2), "reset vector found: the program ran");
+    assert_eq!(nes.peek(out.vars["b"].addr), cell(7, 3));
+    assert_eq!(nes.bus.bus_conflicts, 0);
+}
+
+#[test]
+fn programs_up_to_32kb_of_prg_stay_nrom() {
+    // 6 wide maps (~24KB) + code: more than 24KB but under 32KB of PRG
+    let mut src = String::new();
+    for i in 0..6 {
+        src.push_str(&wide_map(&format!("M{i}"), 128));
+    }
+    src.push_str("fn main() { draw_map(M5); }");
+    let out = nesl::compile(&src).unwrap();
+    assert!(out.prg_used > 24 * 1024, "{}", out.prg_used);
+    assert_eq!(out.mapper, 0, "CHR is a separate chip in NROM; only PRG counts");
+}

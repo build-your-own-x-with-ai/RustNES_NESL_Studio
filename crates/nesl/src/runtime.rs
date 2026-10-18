@@ -177,19 +177,21 @@ pub fn emit_banked(e: &mut Emitter) {
     e.imm(LDA, 0);
     e.abs(STA, PPUADDR);
     e.abs(STA, PPUADDR); // PPU addr = $0000
-    e.imm(LDX, 0);
-    e.imm(LDY, 0x20); // copy $2000 bytes = 32 pages
-    e.abs(STA, PTR);
     e.imm(LDA, 0x80); // source = $8000
     e.abs(STA, PTR + 1);
+    e.imm(LDA, 0);
+    e.abs(STA, PTR);
+    e.imm(LDX, 0x20); // copy $2000 bytes = 32 pages
+    e.label("__chr_page");
+    e.imm(LDY, 0);
     e.label("__chr_loop");
-    e.ins(LDA, Operand::IndY(0));
+    e.ins(LDA, Operand::IndY(PTR as u8));
     e.abs(STA, PPUDATA);
-    e.imp(INX);
+    e.imp(INY);
     e.br(BNE, "__chr_loop");
     e.ins(INC, Operand::Abs(Val::Num(PTR + 1)));
-    e.imp(DEY);
-    e.br(BNE, "__chr_loop");
+    e.imp(DEX);
+    e.br(BNE, "__chr_page");
     e.imp(RTS);
 }
 

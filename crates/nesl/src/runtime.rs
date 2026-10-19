@@ -39,6 +39,8 @@ pub const SMT_W: u16 = 0x0360;
 /// Map chosen through a map list (`L[i]`): its id and width, set by `__map_sel`.
 pub const SEL_ID: u16 = 0x0361;
 pub const SEL_W: u16 = 0x0362;
+/// Map's bank number for dynamic map list selection (banked mode only).
+pub const SEL_BANK: u16 = 0x037E;
 /// Non-zero while the main program is appending to the queue; NMI then skips the flush.
 pub const VQ_LOCK: u16 = 0x0363;
 // Sound effect state, advanced once per frame by the NMI.
@@ -150,7 +152,50 @@ impl Emitter {
 }
 
 /// Emits reset, NMI and IRQ handlers. `__init_globals` and `f_main` are provided by codegen.
-pub fn emit_core(e: &mut Emitter) {
+/// Emits __bank(A) and __chr_copy for UNROM mapper 2.
+pub fn emit_banked(e: &mut Emitter) {
+    use crate::asm::{Item, Op::*, Operand, Val};
+    
+    e.comment("---- UNROM bank switching ----");
+    e.label("__bank");
+    // Bus-conflict-safe: writes to __bank_table+A where ROM[addr]=A
+    e.imp(TAX);
+    e.ins(STA, Operand::AbsX(Val::Label("__bank_table".into(), 0)));
+    e.imp(RTS);
+    
+    // Bank table: 16 bytes where byte N = N
+    e.label("__bank_table");
+    e.items.push(Item::Bytes((0..16u8).collect()));
+    
+    // Copy 8KB CHR data from bank 0 at $8000 into PPU $0000-$1FFF
+    e.comment("---- CHR copy (bank 0 -> CHR-RAM) ----");
+    e.label("__chr_copy");
+    e.imm(LDA, 0); // select bank 0
+    e.jsr("__bank");
+    e.imm(LDA, 0); // PPUCTRL: +1 increments, NMI still off
+    e.abs(STA, PPUCTRL);
+    e.imm(LDA, 0);
+    e.abs(STA, PPUADDR);
+    e.abs(STA, PPUADDR); // PPU addr = $0000
+    e.imm(LDA, 0x80); // source = $8000
+    e.abs(STA, PTR + 1);
+    e.imm(LDA, 0);
+    e.abs(STA, PTR);
+    e.imm(LDX, 0x20); // copy $2000 bytes = 32 pages
+    e.label("__chr_page");
+    e.imm(LDY, 0);
+    e.label("__chr_loop");
+    e.ins(LDA, Operand::IndY(PTR as u8));
+    e.abs(STA, PPUDATA);
+    e.imp(INY);
+    e.br(BNE, "__chr_loop");
+    e.ins(INC, Operand::Abs(Val::Num(PTR + 1)));
+    e.imp(DEX);
+    e.br(BNE, "__chr_page");
+    e.imp(RTS);
+}
+
+pub fn emit_core(e: &mut Emitter, banked: bool) {
     e.comment("---- runtime: reset ----");
     e.label("__reset");
     e.imp(SEI);
@@ -188,6 +233,7 @@ pub fn emit_core(e: &mut Emitter) {
     e.abs(STA, CTRL_SHADOW);
     e.abs(STA, LAST_CTRL);
     e.abs(STA, PPUCTRL);
+    if banked { e.jsr("__chr_copy"); }
     e.jsr("__init_globals");
     e.jsr("f_main");
     e.label("__halt");
@@ -307,4 +353,43 @@ pub fn emit_math(e: &mut Emitter) {
     e.abs(STA, TMP2);
     e.abs(LDA, TMP0);
     e.imp(RTS);
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    /// Every runtime variable gets its own bytes: two names on one address silently
+    /// corrupt each other (SEL_BANK once shared VQ_LOCK and froze the VRAM queue).
+    #[test]
+    fn runtime_variables_do_not_overlap() {
+        let mut vars: Vec<(&str, u16, u16)> = vec![
+            ("TMP0", TMP0, 1), ("TMP1", TMP1, 1), ("TMP2", TMP2, 1), ("TMP3", TMP3, 1),
+            ("PTR", PTR, 2), ("PTR2", PTR2, 2), ("FRAME", FRAME, 1), ("CTRL_SHADOW", CTRL_SHADOW, 1),
+            ("MASK_SHADOW", MASK_SHADOW, 1), ("SCROLL_X", SCROLL_X, 1), ("SCROLL_Y", SCROLL_Y, 1),
+            ("RNG", RNG, 1), ("TMP4", TMP4, 1), ("TMP5", TMP5, 1), ("ARG0", ARG0, 1), ("ARG1", ARG1, 1),
+            ("ARG2", ARG2, 1), ("ARG3", ARG3, 1), ("ARG4", ARG4, 1), ("VQ_LEN", VQ_LEN, 1),
+            ("NMI_PTR", NMI_PTR, 2), ("VQ", VQ, VQ_SIZE as u16), ("PRINT_BUF", PRINT_BUF, 5),
+            ("SMT_W", SMT_W, 1), ("SEL_ID", SEL_ID, 1), ("SEL_W", SEL_W, 1), ("SEL_BANK", SEL_BANK, 1),
+            ("VQ_LOCK", VQ_LOCK, 1), ("SFX_TIMER", SFX_TIMER, 1), ("SFX_CH", SFX_CH, 1),
+            ("SFX_PLO", SFX_PLO, 1), ("SFX_DELTA", SFX_DELTA, 1), ("SFX_MAXVOL", SFX_MAXVOL, 1),
+            ("SFX_DUTY", SFX_DUTY, 1), ("APU_EN", APU_EN, 1), ("CAM_X", CAM_X, 2), ("CAM_COL", CAM_COL, 1),
+            ("MAP_T", MAP_T, 2), ("MAP_A", MAP_A, 2), ("MAP_W", MAP_W, 1), ("SC_COL", SC_COL, 1),
+            ("SC_G", SC_G, 1), ("SC_R", SC_R, 1), ("LAST_CTRL", LAST_CTRL, 1), ("LAST_SX", LAST_SX, 1),
+            ("CA_LO", CA_LO, 1), ("CA_HI", CA_HI, 1), ("SUB_LO", SUB_LO, 1), ("SUB_HI", SUB_HI, 1),
+            ("NGROUPS", NGROUPS, 1), ("AG", AG, 1), ("MU_ON", MU_ON, 1), ("MU_NOTE", MU_NOTE, 1),
+            ("MU_ARG", MU_ARG, 1), ("OV_COUNT", OV_COUNT, 1), ("STATUS_ROWS", STATUS_ROWS, 1),
+            ("MAP_ID", MAP_ID, 1), ("OV_RES", OV_RES, 1), ("STATUS_TMP", STATUS_TMP, 1),
+        ];
+        for (i, v) in VOICES.iter().enumerate() {
+            vars.push((["VOICE0", "VOICE1", "VOICE2"][i], *v, 8));
+        }
+        vars.sort_by_key(|v| v.1);
+        for w in vars.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            assert!(a.1 + a.2 <= b.1, "{} (${:04X}, {} bytes) overlaps {} (${:04X})", a.0, a.1, a.2, b.0, b.1);
+        }
+        let last = vars.last().unwrap();
+        assert!(last.1 + last.2 <= USER_RAM_START, "{} runs into user RAM", last.0);
+    }
 }

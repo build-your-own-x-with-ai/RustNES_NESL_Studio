@@ -40,6 +40,14 @@ pub struct NesBus {
     /// `(cycle, kind, value)` for every PPUCTRL / PPUSCROLL write:
     /// kind 0 = `$2000`, 1 = `$2005` x, 2 = `$2005` y.
     pub reg_log: Vec<(u64, u8, u8)>,
+    /// Mapper 2 bus conflicts (write value != ROM byte).
+    pub bus_conflicts: usize,
+    /// Mapper 0 (NROM) or 2 (UNROM).
+    mapper: u8,
+    /// Mapper 2: current PRG bank in $8000-$BFFF.
+    prg_bank: usize,
+    /// Total PRG banks.
+    prg_banks: usize,
     oam_addr: u8,
     write_toggle: bool,
     ppu_addr: u16,
@@ -68,6 +76,10 @@ impl NesBus {
             sprite0_at: None,
             sprite0_clear: 0,
             reg_log: Vec::new(),
+            bus_conflicts: 0,
+            mapper: 0,
+            prg_bank: 0,
+            prg_banks: 1,
             oam_addr: 0,
             write_toggle: false,
             ppu_addr: 0,
@@ -82,6 +94,12 @@ impl NesBus {
     fn prg_read(&self, addr: u16) -> u8 {
         if self.prg.is_empty() {
             return 0;
+        }
+        if self.mapper == 2 {
+            // UNROM: $8000-$BFFF = switchable, $C000-$FFFF = fixed last bank
+            let bank = if addr < 0xC000 { self.prg_bank } else { self.prg_banks - 1 };
+            let off = bank * 0x4000 + (addr as usize & 0x3FFF);
+            return self.prg[off % self.prg.len()];
         }
         let off = (addr as usize - 0x8000) % self.prg.len();
         self.prg[off]
@@ -275,6 +293,13 @@ impl Bus for NesBus {
                 _ => {}
             },
             0x4014 => self.oam_dma(val),
+            0x8000..=0xFFFF if self.mapper == 2 => {
+                let rom_byte = self.prg_read(addr);
+                if val != rom_byte {
+                    self.bus_conflicts += 1;
+                }
+                self.prg_bank = ((val & rom_byte) as usize) % self.prg_banks;
+            }
             0x4016 => {
                 let new = val & 1 != 0;
                 if self.strobe || new {
@@ -295,6 +320,11 @@ pub struct TestNes {
 }
 
 impl TestNes {
+    /// Side-effectful write (through the CPU write path).
+    pub fn poke(&mut self, addr: u16, val: u8) {
+        self.bus.write(addr, val);
+    }
+
     /// Parses an iNES image (mapper 0 only), loads PRG/CHR and resets the CPU.
     pub fn from_ines(rom: &[u8]) -> Result<TestNes, String> {
         if rom.len() < 16 || &rom[0..4] != b"NES\x1A" {
@@ -303,11 +333,14 @@ impl TestNes {
         let prg_banks = rom[4] as usize;
         let chr_banks = rom[5] as usize;
         let mapper = (rom[6] >> 4) | (rom[7] & 0xF0);
-        if mapper != 0 {
-            return Err(format!("unsupported mapper {mapper} (only mapper 0 / NROM)"));
+        if mapper != 0 && mapper != 2 {
+            return Err(format!("unsupported mapper {mapper} (supported: 0 NROM, 2 UNROM)"));
         }
-        if prg_banks != 1 && prg_banks != 2 {
+        if mapper == 0 && prg_banks != 1 && prg_banks != 2 {
             return Err(format!("NROM requires 1 or 2 PRG banks, got {prg_banks}"));
+        }
+        if mapper == 2 && (prg_banks == 0 || prg_banks > 16) {
+            return Err(format!("UNROM supports 1-16 PRG banks, got {prg_banks}"));
         }
         let trainer = if rom[6] & 0x04 != 0 { 512 } else { 0 };
         let prg_start = 16 + trainer;
@@ -322,6 +355,8 @@ impl TestNes {
         let prg = rom[prg_start..prg_end].to_vec();
         let chr = rom[prg_end..chr_end].to_vec();
         let mut bus = NesBus::new(prg, chr);
+        bus.mapper = mapper;
+        bus.prg_banks = prg_banks;
         if !bus.chr.is_empty() {
             let n = bus.chr.len().min(0x2000);
             bus.vram[..n].copy_from_slice(&bus.chr[..n]);

@@ -28,7 +28,7 @@ pub(crate) enum Sym {
     StructArray(String),
     /// A background map in ROM (column-major tiles at `label`, attributes at `label_a`);
     /// `id` (1-based) tags its entries in the runtime change list.
-    Map { label: String, width: u8, id: u8 },
+    Map { label: String, width: u8, id: u8, bank: u8 },
     /// A song: 2-byte events at `label`; `lowest` is used for per-voice range checks.
     Music { label: String, lowest: Option<(u8, Pos)> },
     /// `const L: [map]`: map ids (1-based) stored at `label`.
@@ -59,9 +59,12 @@ pub struct Codegen {
     /// User `sound` effects, appended to the built-in table (ids 5, 6, ...).
     sounds: Vec<[u8; 8]>,
     map_count: u8,
-    /// (tile label, width) for map id 1, 2, ...; used by map lists.
-    pub(crate) map_table: Vec<(String, u8)>,
+    /// (tile label, width, bank) for map id 1, 2, ...; used by map lists.
+    pub(crate) map_table: Vec<(String, u8, u8)>,
     has_map_lists: bool,
+    /// Compile in banked mode (UNROM): maps go in switchable banks, not inline data.
+    pub(crate) banked: bool,
+    declared_maps: Vec<(String, Vec<u8>, Vec<u8>)>,
     scopes: Vec<HashMap<String, Sym>>,
     /// (continue label, break label) for each enclosing loop.
     loops: Vec<(String, String)>,
@@ -192,6 +195,8 @@ impl Codegen {
             map_count: 0,
             map_table: Vec::new(),
             has_map_lists: false,
+            banked: false,
+            declared_maps: Vec::new(),
             scopes: Vec::new(),
             loops: Vec::new(),
             cur_ret: None,
@@ -211,7 +216,10 @@ impl Codegen {
     // ------------------------------------------------------------------ program
 
     pub fn program(&mut self, prog: &Program) {
-        runtime::emit_core(&mut self.e);
+        runtime::emit_core(&mut self.e, self.banked);
+        if self.banked {
+            runtime::emit_banked(&mut self.e);
+        }
         runtime::emit_math(&mut self.e);
         crate::builtins::emit_runtime(&mut self.e);
 
@@ -244,10 +252,15 @@ impl Codegen {
                 // Keep the name defined so later uses do not cascade into
                 // misleading "unknown" errors.
                 if let Decl::Map { name, .. } = d {
-                    self.globals.entry(name.clone()).or_insert(Sym::Map { label: "__bad_map".into(), width: 32, id: 0 });
+                    self.globals.entry(name.clone()).or_insert(Sym::Map { label: "__bad_map".into(), width: 32, id: 0, bank: 0 });
                 }
                 self.errors.push(e);
             }
+        }
+
+        // Assign maps to banks if in banked mode
+        if self.banked {
+            self.assign_banks();
         }
         // Map lists after all maps, so a list may name maps declared later.
         for d in &prog.items {
@@ -458,7 +471,63 @@ impl Codegen {
         Ok(())
     }
 
-    /// `__map_sel`: A = map id -> PTR = tiles, PTR2 = attributes, SEL_ID, SEL_W.
+    /// First-fit assignment of maps into 16KB banks. Bank 0 reserves 8KB for CHR.
+    fn assign_banks(&mut self) {
+        const BANK_SIZE: usize = 0x4000; // 16KB
+        const CHR_SIZE: usize = 0x2000;  // 8KB reserved in bank 0
+        
+        let mut banks: Vec<usize> = vec![CHR_SIZE]; // bank 0 starts with CHR
+        let mut assignments = Vec::new(); // (map_index, bank_index)
+        
+        for (i, (_, width, _)) in self.map_table.iter().enumerate() {
+            let tiles_size = (*width as usize) * 30;
+            let attrs_size = (*width as usize).div_ceil(4) * 8;
+            let map_size = tiles_size + attrs_size;
+            
+            // Find first bank with space, or create new one
+            let mut bank_idx = None;
+            for (b_idx, used) in banks.iter_mut().enumerate() {
+                if *used + map_size <= BANK_SIZE {
+                    *used += map_size;
+                    bank_idx = Some(b_idx);
+                    break;
+                }
+            }
+            if bank_idx.is_none() {
+                if banks.len() >= 16 {
+                    self.errors.push(Diagnostic::new(
+                        crate::ast::Pos { line: 1, col: 1 },
+                        "too many maps: UNROM supports at most 16 banks".to_string(),
+                    ));
+                    return;
+                }
+                banks.push(map_size);
+                bank_idx = Some(banks.len() - 1);
+            }
+            assignments.push((i, bank_idx.unwrap()));
+        }
+        
+        // Apply assignments to map_table
+        for (i, bank) in assignments.iter() {
+            self.map_table[*i].2 = *bank as u8;
+        }
+        
+        // Update bank in global symbols
+        for (map_idx, bank) in assignments {
+            let map_id = (map_idx + 1) as u8;
+            for sym in self.globals.values_mut() {
+                if let Sym::Map { id, bank: b, .. } = sym {
+                    if *id == map_id {
+                        *b = bank as u8;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+
+    /// `__map_sel`: A = map id -> PTR = tiles, PTR2 = attributes, SEL_ID, SEL_W, SEL_BANK.
     /// An invalid id (0 or past the last map) selects map 1.
     fn emit_map_select(&mut self) {
         use crate::asm::{Item, Val};
@@ -486,17 +555,27 @@ impl Codegen {
         self.e.abs(LDX, runtime::SEL_ID);
         self.e.ins(LDA, Operand::AbsX(Val::Label("__map_tab_w".into(), -1)));
         self.e.abs(STA, runtime::SEL_W);
+        if self.banked {
+            self.e.ins(LDA, Operand::AbsX(Val::Label("__map_tab_b".into(), -1)));
+            self.e.abs(STA, runtime::SEL_BANK);
+        }
         self.e.imp(RTS);
-        let tiles = self.map_table.iter().map(|(l, _)| Val::Label(l.clone(), 0)).collect();
-        let attrs = self.map_table.iter().map(|(l, _)| Val::Label(format!("{l}_a"), 0)).collect();
-        let widths = self.map_table.iter().map(|(_, w)| *w).collect();
+        let tiles = self.map_table.iter().map(|(l, _, _)| Val::Label(l.clone(), 0)).collect();
+        let attrs = self.map_table.iter().map(|(l, _, _)| Val::Label(format!("{l}_a"), 0)).collect();
+        let widths = self.map_table.iter().map(|(_, w, _)| *w).collect();
         self.e.label("__map_tab_t");
         self.e.items.push(Item::Words(tiles));
         self.e.label("__map_tab_a");
         self.e.items.push(Item::Words(attrs));
         self.e.label("__map_tab_w");
         self.e.items.push(Item::Bytes(widths));
+        if self.banked {
+            let banks: Vec<u8> = self.map_table.iter().map(|(_, _, b)| *b).collect();
+            self.e.label("__map_tab_b");
+            self.e.items.push(Item::Bytes(banks));
+        }
     }
+
 
     fn const_expr(&self, e: &Expr, what: &str) -> R<i64> {
         self.const_val(e).ok_or_else(|| Diagnostic::new(e.pos, format!("{what} must be a constant expression")))
@@ -595,10 +674,14 @@ impl Codegen {
                 }
                 self.map_count += 1;
                 let id = self.map_count;
-                self.globals.insert(name.clone(), Sym::Map { label: label.clone(), width: width as u8, id });
-                self.map_table.push((label.clone(), width as u8));
-                self.data.push((format!("{label}_a"), attrs));
-                self.data.push((label, tiles));
+                self.globals.insert(name.clone(), Sym::Map { label: label.clone(), width: width as u8, id, bank: 0 });
+                self.map_table.push((label.clone(), width as u8, 0)); // bank assigned later
+                self.declared_maps.push((label.clone(), tiles.clone(), attrs.clone()));
+                if !self.banked {
+                    self.data.push((format!("{label}_a"), attrs));
+                    self.data.push((label, tiles));
+                }
+                // In banked mode, maps are emitted as Equ symbols later
             }
             Decl::PaletteZone { .. } | Decl::MapList { .. } => {}
             Decl::Music { name, parts, pos } => {
@@ -1870,5 +1953,57 @@ impl Codegen {
         self.e.label(&brk);
         Ok(())
     }
+
+    /// Emits banked map data: Equ symbols for the fixed bank, actual data in switchable banks.
+    /// Returns (switchable_banks, chr_data).
+    pub fn emit_banked_maps(&mut self, chr: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
+        use crate::asm::Item;
+        
+        
+        // Group maps by bank
+        type MapData = (String, Vec<u8>, Vec<u8>); // (label, tiles, attributes)
+        let mut bank_maps: std::collections::BTreeMap<u8, Vec<MapData>> = std::collections::BTreeMap::new();
+        
+        for (label, _, bank) in &self.map_table {
+            // Find the map declaration to get tiles and attrs
+            for item in &self.declared_maps {
+                if &item.0 == label {
+                    let (_, tiles, attrs) = item;
+                    bank_maps.entry(*bank).or_default().push((label.clone(), tiles.clone(), attrs.clone()));
+                    break;
+                }
+            }
+        }
+        
+        // Build banks
+        let mut banks = vec![chr.to_vec()]; // bank 0 starts with CHR
+        let max_bank = *self.map_table.iter().map(|(_, _, b)| b).max().unwrap_or(&0);
+        
+        for _ in 1..=max_bank {
+            banks.push(Vec::new());
+        }
+
+        
+        for (bank_idx, maps) in bank_maps {
+            let bank = &mut banks[bank_idx as usize];
+            // All banks start at $8000 in the switchable region
+            let base_addr = 0x8000u16;
+            let mut offset = if bank_idx == 0 { chr.len() } else { 0 };
+            
+            for (label, tiles, attrs) in maps {
+                // Emit Equ for tiles and attrs pointing to this bank's addresses
+                self.e.items.push(Item::Equ(format!("{label}_a"), base_addr + offset as u16));
+                bank.extend_from_slice(&attrs);
+                offset += attrs.len();
+                
+                self.e.items.push(Item::Equ(label.clone(), base_addr + offset as u16));
+                bank.extend_from_slice(&tiles);
+                offset += tiles.len();
+            }
+        }
+        
+        (banks, chr.to_vec())
+    }
+
 
 }

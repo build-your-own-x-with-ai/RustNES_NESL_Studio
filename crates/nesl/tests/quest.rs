@@ -120,7 +120,7 @@ fn three_falls_end_the_game_and_start_returns_to_play() {
 #[test]
 fn flags_lead_through_all_three_worlds_to_the_win_screen() {
     let mut r = start();
-    for w in 0..3u8 {
+    for w in 0..6u8 {
         assert_eq!((r.u8("state"), r.u8("world")), (1, w));
         frames(&mut r, 30, 0);
         poke16(&mut r, "hero.x", 980); // at the flag (column 123)
@@ -132,6 +132,13 @@ fn flags_lead_through_all_three_worlds_to_the_win_screen() {
     frames(&mut r, 5, 0);
     assert_eq!(r.vram(0x2000 + 10 * 32 + 12, 8), b"YOU WIN!".to_vec());
     assert_eq!(r.nes.bus.render_conflicts, 0);
+    assert_eq!(r.nes.bus.bus_conflicts, 0);
+}
+
+#[test]
+fn six_worlds_are_built_as_unrom() {
+    let out = build(&quest());
+    assert_eq!((out.mapper, out.rom[5]), (2, 0), "UNROM with CHR-RAM");
 }
 
 #[test]
@@ -144,5 +151,20 @@ fn a_long_scripted_run_never_glitches() {
         }
     }
     assert_eq!(r.nes.bus.render_conflicts, 0);
+    assert_eq!(r.nes.bus.bus_conflicts, 0);
     assert!(r.nes.bus.sprite0_at.is_some() || r.u8("state") != 1, "status bar split active while playing");
+}
+
+#[test]
+fn the_first_platform_can_be_reached_by_jumping() {
+    let mut r = start();
+    frames(&mut r, 60, 0); // land, invulnerability over
+    // stand on the ground just left of world 1's first platform (row 17, columns 40-45)
+    poke16(&mut r, "hero.x", 37 * 8);
+    frames(&mut r, 10, 0);
+    assert_eq!((r.u8("hero.y"), r.u8("hero.ground")), (152, 1), "on the ground");
+    frames(&mut r, 3, 0x81); // jump while running right
+    frames(&mut r, 12, 0x01);
+    frames(&mut r, 10, 0);
+    assert_eq!((r.u8("hero.y"), r.u8("hero.ground")), (17 * 8 - 16, 1), "standing on the platform");
 }

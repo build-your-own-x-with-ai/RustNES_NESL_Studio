@@ -168,3 +168,20 @@ fn the_first_platform_can_be_reached_by_jumping() {
     frames(&mut r, 10, 0);
     assert_eq!((r.u8("hero.y"), r.u8("hero.ground")), (17 * 8 - 16, 1), "standing on the platform");
 }
+
+#[test]
+fn pits_let_the_hero_fall_through() {
+    let mut r = start();
+    frames(&mut r, 60, 0);
+    // Teleport to the edge of pit 1 (cols 30-32) at ground level
+    poke16(&mut r, "hero.x", 29 * 8);
+    r.nes.poke(r.addr("hero.y"), 152);
+    frames(&mut r, 5, 0);
+    assert_eq!(r.u8("hero.ground"), 1, "standing before the pit");
+    
+    // Walk into the pit
+    frames(&mut r, 10, 0x01); // RIGHT for 10 frames
+    let y_in_pit = r.u8("hero.y");
+    assert!(y_in_pit > 152, "should be falling (y > 152), got y={}", y_in_pit);
+    assert_eq!(r.u8("hero.ground"), 0, "should be airborne in the pit");
+}

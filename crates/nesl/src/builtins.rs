@@ -279,14 +279,20 @@ impl Codegen {
             "camera_follow" => {
                 let m = self.map_arg(&args[1])?;
                 self.slots(&[(&args[0], Type::U16, ARG0)])?;
-                self.map_bank(&m);
-                self.map_setup(&m);
+                self.map_select(&m);  // sets SEL_BANK for dynamic maps
+                self.map_bank(&m);    // switches bank using SEL_BANK
+                self.map_ptrs(&m);    // reads PTR/PTR2 from switched bank
+                self.map_byte(&m, false, ARG2);  // width
+                self.map_byte(&m, true, ARG3);   // id
                 self.e.jsr("__camera_follow");
             }
             "draw_map" => {
                 let m = self.map_arg(&args[0])?;
-                self.map_bank(&m);
-                self.map_setup(&m);
+                self.map_select(&m);  // sets SEL_BANK for dynamic maps
+                self.map_bank(&m);    // switches bank using SEL_BANK
+                self.map_ptrs(&m);    // reads PTR/PTR2 from switched bank
+                self.map_byte(&m, false, ARG2);  // width
+                self.map_byte(&m, true, ARG3);   // id
                 self.e.jsr("__draw_map");
             }
             "map_tile" => {

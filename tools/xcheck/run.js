@@ -4,6 +4,7 @@
 //
 // buttons: controller 1 mask held from power-on (NESL bit order: $80 = A ... $01 = Right).
 // out.txt: line 1 = jsnes' 64-colour table, line 2 = 256*240 pixels (same integer format).
+// Pixels jsnes left undefined are written as 4294967295 (see xcheck.rs).
 "use strict";
 const fs = require("fs");
 const jsnes = require("jsnes");
@@ -25,4 +26,4 @@ for (let i = 0; i < 8; i++) {
 const frames = parseInt(framesArg, 10);
 for (let f = 0; f < frames; f++) nes.frame();
 const table = nes.ppu.palTable.curTable;
-fs.writeFileSync(outPath, table.join(" ") + "\n" + Array.from(last).join(" ") + "\n");
+fs.writeFileSync(outPath, table.join(" ") + "\n" + Array.from(last, (v) => (v === undefined ? 4294967295 : v)).join(" ") + "\n");

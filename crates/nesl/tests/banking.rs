@@ -113,3 +113,30 @@ fn unrom_roms_use_vertical_mirroring_for_horizontal_scrolling() {
     assert_eq!(out.mapper, 2);
     assert_eq!(out.rom[6] & 0x01, 0x01, "flags6 bit 0 must be set (vertical mirroring)");
 }
+
+/// Regression for the FCEUX bug: with the wrong mirroring the streamed columns land in
+/// the visible nametable, so the screen stops matching the map while collision still
+/// reads the real map. Every visible column must hold the map's real tiles.
+#[test]
+fn scrolling_an_unrom_level_keeps_the_screen_in_sync_with_the_map() {
+    let src = format!("{} var hero: u16; var cam: u16;
+        fn main() {{
+            draw_map(MAPS[5]);
+            ppu_on();
+            loop {{
+                wait_vblank();
+                if hero < 700 {{ hero += 3; }}
+                camera_follow(hero, MAPS[5]);
+                cam = camera_x();
+            }}
+        }}", big_maps());
+    let r = run_frames(&src, 300, |_| {});
+    assert_eq!(r.out.mapper, 2);
+    let cam = r.u16("cam") as usize;
+    assert!(cam > 300, "camera should have scrolled, cam={cam}");
+    for c in cam / 8..cam / 8 + 32 {
+        for row in 0..30 {
+            assert_eq!(nt(&r, c % 64, row), cell(c, row), "map column {c} row {row} (cam={cam})");
+        }
+    }
+}

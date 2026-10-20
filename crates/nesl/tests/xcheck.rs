@@ -8,6 +8,11 @@
 //! Known jsnes difference: it draws only 32 background tiles per line, so with a fine
 //! horizontal scroll f > 0 the rightmost f pixels stay background colour (hardware fetches
 //! a 33rd tile). Those pixels are excluded, but jsnes must show background there.
+//!
+//! Known jsnes bug: screen row 0 comes from its dummy pre-render pass, and the final
+//! composite copies opaque row-0 pixels from a background buffer it never filled, leaving
+//! them undefined (seen with a fine horizontal scroll). run.js reports those as
+//! `UNDRAWN`; they are excluded, and must not appear outside row 0.
 mod common;
 use common::*;
 use nes_sim::render::{self, HEIGHT, WIDTH};
@@ -52,6 +57,9 @@ fn jsnes(rom: &[u8], frames: u64, buttons: u8, name: &str) -> (Vec<u32>, Vec<u32
     assert_eq!((table.len(), frame.len()), (64, WIDTH * HEIGHT));
     (table, frame)
 }
+
+/// Pixel value run.js writes where jsnes left the frame buffer undefined.
+const UNDRAWN: u32 = u32::MAX;
 
 /// jsnes stores colours as 0xBBGGRR.
 fn rgb(c: u32) -> [u8; 3] {
@@ -123,9 +131,15 @@ fn check(name: &str, src: &str, frames: u64, buttons: u8) {
     let ours_rgb: Vec<u32> = ours.iter().map(|&i| table[i as usize]).collect();
     let fine = render::line_fine_x(&nes.bus, nes.frames - 1);
     let backdrop = table[(nes.bus.vram[0x3F00] & 0x3F) as usize];
-    let jsnes_gap = |i: usize| i % WIDTH >= WIDTH - fine[i / WIDTH] as usize;
-    let skipped = (0..ours.len()).filter(|&i| jsnes_gap(i)).count();
-    let gap_wrong: Vec<usize> = (0..ours.len()).filter(|&i| jsnes_gap(i) && theirs[i] != backdrop).collect();
+    let undrawn: Vec<usize> = (0..theirs.len()).filter(|&i| theirs[i] == UNDRAWN).collect();
+    assert!(undrawn.iter().all(|&i| i < WIDTH), "`{name}`: jsnes left pixels undefined outside row 0: {:?}", &undrawn[..undrawn.len().min(5)]);
+    if !undrawn.is_empty() {
+        eprintln!("xcheck `{name}`: {} undefined jsnes pixels in row 0 excluded", undrawn.len());
+    }
+    let tile_gap = |i: usize| i % WIDTH >= WIDTH - fine[i / WIDTH] as usize && theirs[i] != UNDRAWN;
+    let jsnes_gap = |i: usize| tile_gap(i) || theirs[i] == UNDRAWN;
+    let skipped = (0..ours.len()).filter(|&i| tile_gap(i)).count();
+    let gap_wrong: Vec<usize> = (0..ours.len()).filter(|&i| tile_gap(i) && theirs[i] != backdrop).collect();
     assert!(gap_wrong.is_empty(), "`{name}`: jsnes drew something in its 33rd-tile gap at {:?}", &gap_wrong[..gap_wrong.len().min(5)]);
     if skipped > 0 {
         eprintln!("xcheck `{name}`: {skipped} pixels in jsnes' 33rd-tile gap excluded");
@@ -134,12 +148,12 @@ fn check(name: &str, src: &str, frames: u64, buttons: u8) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/xcheck");
     std::fs::create_dir_all(&dir).unwrap();
     png(&dir.join(format!("{name}-ours.png")), &ours_rgb.iter().map(|&c| rgb(c)).collect::<Vec<_>>());
-    png(&dir.join(format!("{name}-jsnes.png")), &theirs.iter().map(|&c| rgb(c)).collect::<Vec<_>>());
+    png(&dir.join(format!("{name}-jsnes.png")), &theirs.iter().map(|&c| rgb(if c == UNDRAWN { 0 } else { c })).collect::<Vec<_>>());
     let diff_path = dir.join(format!("{name}-diff.png"));
     let _ = std::fs::remove_file(&diff_path); // a stale diff from an earlier failure would mislead
     if !bad.is_empty() {
         let diff: Vec<[u8; 3]> = (0..ours.len())
-            .map(|i| if ours_rgb[i] != theirs[i] { [255, 0, 0] } else { rgb(theirs[i]).map(|v| v / 3) })
+            .map(|i| if !jsnes_gap(i) && ours_rgb[i] != theirs[i] { [255, 0, 0] } else { rgb(theirs[i]).map(|v| v / 3) })
             .collect();
         png(&diff_path, &diff);
         let mut rows: Vec<usize> = bad.iter().map(|i| i / WIDTH).collect();
@@ -209,4 +223,30 @@ fn scrolled_level_with_status_bar_matches_jsnes() {
         wide_map("W", 128)
     );
     check("scroll", &src, 330, 0);
+}
+
+/// 010: a scrolled UNROM (mapper 2, CHR-RAM) level, so mirroring and banking are
+/// compared against jsnes too, not only static NROM screens.
+#[test]
+fn scrolled_unrom_level_matches_jsnes() {
+    let mut maps = String::from("const MAPS: [map] = [");
+    (0..9).for_each(|i| maps.push_str(&format!("M{i},")));
+    maps.push_str("];\n");
+    (0..9).for_each(|i| maps.push_str(&wide_map(&format!("M{i}"), 128)));
+    let src = format!(
+        "{maps}
+        var hero: u16; var cam: u16;
+        fn main() {{
+            draw_map(MAPS[5]);
+            ppu_on();
+            loop {{
+                wait_vblank();
+                if hero < 700 {{ hero += 3; }}
+                camera_follow(hero, MAPS[5]);
+                cam = camera_x();
+            }}
+        }}"
+    );
+    assert_eq!(build(&src).mapper, 2, "scene must be UNROM");
+    check("scroll-unrom", &src, 330, 0);
 }

@@ -71,8 +71,8 @@ macro_rules! sig {
 pub fn signature(name: &str) -> Option<Signature> {
     const U8: Option<Type> = Some(Type::U8);
     Some(match name {
-        "wait_vblank" | "ppu_on" | "ppu_off" | "stop_sound" => sig!(=> None),
-        "frame_count" | "rand" => sig!(=> U8),
+        "wait_vblank" | "ppu_on" | "ppu_off" | "stop_sound" | "save_game" => sig!(=> None),
+        "frame_count" | "rand" | "load_game" => sig!(=> U8),
         "load_palette" => sig!(Data => None),
         "vram_addr" => sig!(U16 => None),
         "vram_put" | "hide_sprite" => sig!(U8 => None),
@@ -139,6 +139,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("sfx", "sfx(id: u8)", "播放音效：SFX_JUMP 等内置音效，或 sound 声明的名字"),
     ("play_music", "play_music(MELODY[, BASS[, HARMONY]])", "播放 music 声明的音乐，1-3 个声部，自动循环"),
     ("stop_music", "stop_music()", "停止音乐"),
+    ("save_game", "save_game()", "将全局变量写入存档（SRAM）"),
+    ("load_game", "load_game() -> u8", "从存档载入变量；存档存在返回 1，否则返回 0"),
 ];
 
 pub fn is_builtin_fn(name: &str) -> bool {
@@ -162,6 +164,8 @@ impl Codegen {
             "ppu_off" => self.e.jsr("__ppu_off"),
             "frame_count" => self.e.abs(LDA, FRAME),
             "rand" => self.e.jsr("__rand"),
+            "save_game" => self.e.jsr("__save_game"),
+            "load_game" => self.e.jsr("__load_game"),
             "stop_music" => self.e.jsr("__stop_music"),
             "stop_sound" => {
                 self.e.imm(LDA, 0);

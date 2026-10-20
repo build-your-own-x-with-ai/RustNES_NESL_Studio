@@ -24,7 +24,7 @@ pub fn build_unrom(banks: Vec<Vec<u8>>, fixed: &[u8], nmi: u16, reset: u16, irq:
         b'N', b'E', b'S', 0x1A,
         prg_banks as u8,
         0, // CHR count = 0 (CHR-RAM)
-        0x21, // flags6: mapper 2 low nibble, bit 0 = vertical mirroring
+        0x23, // flags6: mapper 2 low nibble, bit 0 = vertical mirroring, bit 1 = battery (SRAM)
         0x00, // flags7: mapper 2 high nibble
     ];
     rom.resize(16, 0);
@@ -64,8 +64,8 @@ pub fn build_ines(code: &[u8], nmi: u16, reset: u16, irq: u16, chr: &[u8]) -> Re
         return Err(format!("CHR data must be {CHR_SIZE} bytes, got {}", chr.len()));
     }
     let mut rom = Vec::with_capacity(HEADER_SIZE + PRG_SIZE + CHR_SIZE);
-    // "NES\x1A", 2x16KB PRG, 1x8KB CHR, flags6: mapper 0 + vertical mirroring
-    rom.extend_from_slice(&[b'N', b'E', b'S', 0x1A, 2, 1, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    // "NES\x1A", 2x16KB PRG, 1x8KB CHR, flags6: mapper 0 + vertical mirroring + battery (SRAM)
+    rom.extend_from_slice(&[b'N', b'E', b'S', 0x1A, 2, 1, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     rom.extend_from_slice(code);
     rom.resize(HEADER_SIZE + limit, 0xFF);
     for v in [nmi, reset, irq] {
@@ -84,7 +84,7 @@ mod tests {
         let chr = vec![0x11; CHR_SIZE];
         let rom = build_ines(&[0xEA, 0x60], 0x8001, 0x8000, 0x8002, &chr).unwrap();
         assert_eq!(rom.len(), 16 + 32768 + 8192);
-        assert_eq!(&rom[..8], &[b'N', b'E', b'S', 0x1A, 2, 1, 0x01, 0]);
+        assert_eq!(&rom[..8], &[b'N', b'E', b'S', 0x1A, 2, 1, 0x03, 0]);
         assert_eq!(&rom[16..18], &[0xEA, 0x60]);
         assert_eq!(rom[18], 0xFF, "unused PRG is padded with $FF");
         let v = 16 + 0x7FFA;

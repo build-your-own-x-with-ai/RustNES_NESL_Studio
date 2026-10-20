@@ -311,6 +311,8 @@ impl Codegen {
             }
         }
 
+        self.emit_save_load();
+
         if self.has_map_lists {
             self.emit_map_select();
         }
@@ -574,6 +576,140 @@ impl Codegen {
             self.e.label("__map_tab_b");
             self.e.items.push(Item::Bytes(banks));
         }
+    }
+
+    fn emit_save_load(&mut self) {
+        use crate::asm::Item;
+        self.e.comment("---- save/load game ----");
+        // Table of (addr_lo, addr_hi, size_lo, size_hi) for all globals.
+        self.e.label("__save_tab");
+        for v in self.vars.values() {
+            self.e.items.push(Item::Bytes(vec![v.addr as u8, (v.addr >> 8) as u8, v.size as u8, (v.size >> 8) as u8]));
+        }
+        self.e.items.push(Item::Bytes(vec![0, 0, 0, 0])); // terminator
+
+        self.e.label("__save_game");
+        self.e.comment("Write magic 'NESL' to $6000");
+        self.e.imm(LDA, b'N');
+        self.e.abs(STA, 0x6000);
+        self.e.imm(LDA, b'E');
+        self.e.abs(STA, 0x6001);
+        self.e.imm(LDA, b'S');
+        self.e.abs(STA, 0x6002);
+        self.e.imm(LDA, b'L');
+        self.e.abs(STA, 0x6003);
+        self.e.comment("Copy all globals to $6004+");
+        self.e.imm(LDX, 0);
+        self.e.imm(LDA, 4); // SRAM write offset (low)
+        self.e.abs(STA, runtime::ARG0);
+        self.e.imm(LDA, 0x60); // SRAM write offset (high)
+        self.e.abs(STA, runtime::ARG0 + 1);
+        self.e.label("__save_loop");
+        self.e.comment("Load address of next variable");
+        self.e.ins(LDA, Operand::AbsX(Val::Label("__save_tab".into(), 0)));
+        self.e.br(BEQ, "__save_done"); // terminator
+        self.e.abs(STA, runtime::PTR);
+        self.e.ins(LDA, Operand::AbsX(Val::Label("__save_tab".into(), 1)));
+        self.e.abs(STA, runtime::PTR + 1);
+        self.e.comment("Load size");
+        self.e.ins(LDA, Operand::AbsX(Val::Label("__save_tab".into(), 2)));
+        self.e.abs(STA, runtime::TMP4);
+        self.e.ins(LDA, Operand::AbsX(Val::Label("__save_tab".into(), 3)));
+        self.e.abs(STA, runtime::TMP5);
+        self.e.comment("Copy loop");
+        self.e.imm(LDY, 0);
+        self.e.label("__save_copy");
+        self.e.ins(LDA, Operand::IndY(runtime::PTR as u8));
+        self.e.ins(STA, Operand::IndY(runtime::ARG0 as u8));
+        self.e.comment("Increment both pointers");
+        self.e.abs(INC, runtime::PTR);
+        self.e.br(BNE, "__save_no_carry1");
+        self.e.abs(INC, runtime::PTR + 1);
+        self.e.label("__save_no_carry1");
+        self.e.abs(INC, runtime::ARG0);
+        self.e.br(BNE, "__save_no_carry2");
+        self.e.abs(INC, runtime::ARG0 + 1);
+        self.e.label("__save_no_carry2");
+        self.e.comment("Decrement size");
+        self.e.abs(LDA, runtime::TMP4);
+        self.e.br(BNE, "__save_skip_hi");
+        self.e.abs(DEC, runtime::TMP5);
+        self.e.label("__save_skip_hi");
+        self.e.abs(DEC, runtime::TMP4);
+        self.e.comment("Check if done");
+        self.e.abs(LDA, runtime::TMP4);
+        self.e.abs(ORA, runtime::TMP5);
+        self.e.br(BNE, "__save_copy");
+        self.e.comment("Next variable");
+        self.e.imp(TXA);
+        self.e.imp(CLC);
+        self.e.imm(ADC, 4);
+        self.e.imp(TAX);
+        self.e.jmp("__save_loop");
+        self.e.label("__save_done");
+        self.e.imp(RTS);
+
+        self.e.label("__load_game");
+        self.e.comment("Check magic at $6000");
+        self.e.abs(LDA, 0x6000);
+        self.e.imm(CMP, b'N');
+        self.e.br(BNE, "__load_fail");
+        self.e.abs(LDA, 0x6001);
+        self.e.imm(CMP, b'E');
+        self.e.br(BNE, "__load_fail");
+        self.e.abs(LDA, 0x6002);
+        self.e.imm(CMP, b'S');
+        self.e.br(BNE, "__load_fail");
+        self.e.abs(LDA, 0x6003);
+        self.e.imm(CMP, b'L');
+        self.e.br(BNE, "__load_fail");
+        self.e.comment("Copy from $6004 to globals");
+        self.e.imm(LDX, 0);
+        self.e.imm(LDA, 4); // SRAM read offset (low)
+        self.e.abs(STA, runtime::ARG0);
+        self.e.imm(LDA, 0x60); // SRAM read offset (high)
+        self.e.abs(STA, runtime::ARG0 + 1);
+        self.e.label("__load_loop");
+        self.e.ins(LDA, Operand::AbsX(Val::Label("__save_tab".into(), 0)));
+        self.e.br(BEQ, "__load_ok");
+        self.e.abs(STA, runtime::PTR);
+        self.e.ins(LDA, Operand::AbsX(Val::Label("__save_tab".into(), 1)));
+        self.e.abs(STA, runtime::PTR + 1);
+        self.e.ins(LDA, Operand::AbsX(Val::Label("__save_tab".into(), 2)));
+        self.e.abs(STA, runtime::TMP4);
+        self.e.ins(LDA, Operand::AbsX(Val::Label("__save_tab".into(), 3)));
+        self.e.abs(STA, runtime::TMP5);
+        self.e.imm(LDY, 0);
+        self.e.label("__load_copy");
+        self.e.ins(LDA, Operand::IndY(runtime::ARG0 as u8));
+        self.e.ins(STA, Operand::IndY(runtime::PTR as u8));
+        self.e.abs(INC, runtime::ARG0);
+        self.e.br(BNE, "__load_no_carry1");
+        self.e.abs(INC, runtime::ARG0 + 1);
+        self.e.label("__load_no_carry1");
+        self.e.abs(INC, runtime::PTR);
+        self.e.br(BNE, "__load_no_carry2");
+        self.e.abs(INC, runtime::PTR + 1);
+        self.e.label("__load_no_carry2");
+        self.e.abs(LDA, runtime::TMP4);
+        self.e.br(BNE, "__load_skip_hi");
+        self.e.abs(DEC, runtime::TMP5);
+        self.e.label("__load_skip_hi");
+        self.e.abs(DEC, runtime::TMP4);
+        self.e.abs(LDA, runtime::TMP4);
+        self.e.abs(ORA, runtime::TMP5);
+        self.e.br(BNE, "__load_copy");
+        self.e.imp(TXA);
+        self.e.imp(CLC);
+        self.e.imm(ADC, 4);
+        self.e.imp(TAX);
+        self.e.jmp("__load_loop");
+        self.e.label("__load_ok");
+        self.e.imm(LDA, 1);
+        self.e.imp(RTS);
+        self.e.label("__load_fail");
+        self.e.imm(LDA, 0);
+        self.e.imp(RTS);
     }
 
 

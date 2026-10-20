@@ -19,6 +19,8 @@ pub fn pixel_cycle(x: u8, y: u8) -> u64 {
 #[derive(Clone)]
 pub struct NesBus {
     pub ram: [u8; 0x800],
+    /// SRAM at $6000-$7FFF (8KB, battery-backed on real hardware).
+    pub sram: [u8; 0x2000],
     pub prg: Vec<u8>,
     pub chr: Vec<u8>,
     pub vram: Vec<u8>,
@@ -61,9 +63,15 @@ pub struct NesBus {
 }
 
 impl NesBus {
+    /// Returns a copy of SRAM ($6000-$7FFF, 8KB).
+    pub fn sram_snapshot(&self) -> Vec<u8> {
+        self.sram.to_vec()
+    }
+
     pub fn new(prg: Vec<u8>, chr: Vec<u8>) -> Self {
         NesBus {
             ram: [0; 0x800],
+            sram: [0; 0x2000],
             prg,
             chr,
             vram: vec![0; 0x4000],
@@ -112,6 +120,7 @@ impl NesBus {
     pub fn peek(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF],
+            0x6000..=0x7FFF => self.sram[(addr - 0x6000) as usize],
             0x8000..=0xFFFF => self.prg_read(addr),
             _ => 0,
         }
@@ -266,6 +275,7 @@ impl Bus for NesBus {
             },
             0x4016 => self.read_controller(0),
             0x4017 => self.read_controller(1),
+            0x6000..=0x7FFF => self.sram[(addr - 0x6000) as usize],
             0x8000..=0xFFFF => self.prg_read(addr),
             _ => 0,
         }
@@ -327,6 +337,7 @@ impl Bus for NesBus {
                 self.strobe = new;
             }
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu_writes.push((addr, val)),
+            0x6000..=0x7FFF => self.sram[(addr - 0x6000) as usize] = val,
             _ => {}
         }
     }
@@ -442,5 +453,16 @@ impl TestNes {
 
     pub fn set_buttons(&mut self, port: usize, mask: u8) {
         self.bus.buttons[port] = mask;
+    }
+
+    /// Returns a copy of SRAM ($6000-$7FFF, 8KB).
+    pub fn sram_snapshot(&self) -> Vec<u8> {
+        self.bus.sram_snapshot()
+    }
+
+    /// Restores SRAM from a previous snapshot (simulates battery-backed save).
+    pub fn restore_sram(&mut self, data: &[u8]) {
+        let len = data.len().min(0x2000);
+        self.bus.sram[..len].copy_from_slice(&data[..len]);
     }
 }

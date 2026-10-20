@@ -188,6 +188,26 @@ fn pits_let_the_hero_fall_through() {
 
 
 #[test]
+fn completing_a_world_saves_progress() {
+    // Start the game
+    let mut r = start();
+    assert_eq!((r.u8("state"), r.u8("world")), (1, 0));
+
+    // Teleport hero so its center (hero.x + 4) >> 3 hits the flag at column 123
+    poke16(&mut r, "hero.x", 123 * 8 - 4); // cx = (984 - 4 + 4) >> 3 = 123
+    poke(&mut r, "hero.y", 0, 100);
+    frames(&mut r, 50, 0); // let update_hero run
+
+    // Should transition to world complete, then world 1
+    assert_eq!(r.u8("state"), 2, "world complete");
+    frames(&mut r, 200, 0);
+    assert_eq!((r.u8("state"), r.u8("world")), (1, 1), "playing world 1");
+
+    // TODO: add SRAM assertions once save_game() builtin is implemented
+    // assert_eq!(&r.nes.bus.sram[0..4], b"NESL", "save magic");
+}
+
+#[test]
 fn collision_detection_works_on_solid_ground() {
     let mut r = start();
     frames(&mut r, 60, 0);

@@ -226,7 +226,12 @@ fn update_foes() {
 }
 
 fn main() {
-    show_screen(0);
+    if load_game() && world < 6 {
+        show_screen(0);  // brief title flash
+        start_world();
+    } else {
+        show_screen(0);
+    }
     ppu_on();
     loop {
         wait_vblank();
@@ -235,7 +240,12 @@ fn main() {
         let pressed = pad & ~prev;
         prev = pad;
         match state {
-            0 | 3 | 4 => { if pressed & BTN_START { new_game(); } }
+            0 | 3 | 4 => {
+                if pressed & BTN_START {
+                    if !load_game() || world >= 6 { new_game(); }
+                    else { start_world(); }
+                }
+            }
             1 => {
                 update_hero(pad, pressed);
                 if state == 1 {
@@ -249,6 +259,7 @@ fn main() {
                 timer -= 1;
                 if timer == 0 {
                     world += 1;
+                    save_game();
                     if world == 6 { show_screen(4); } else {
                         reset_map(WORLDS[world - 1]);   // free its change slots (64 shared)
                         start_world();

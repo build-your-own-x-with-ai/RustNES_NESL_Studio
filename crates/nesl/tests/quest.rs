@@ -185,3 +185,26 @@ fn pits_let_the_hero_fall_through() {
     assert!(y_in_pit > 152, "should be falling (y > 152), got y={}", y_in_pit);
     assert_eq!(r.u8("hero.ground"), 0, "should be airborne in the pit");
 }
+
+
+#[test]
+fn collision_detection_works_on_solid_ground() {
+    let mut r = start();
+    frames(&mut r, 60, 0);
+    
+    // 把英雄传送到 col 10 (地面上方)
+    poke16(&mut r, "hero.x", 10 * 8);
+    r.nes.poke(r.addr("hero.y"), 152);
+    r.nes.poke(r.addr("hero.vy"), 2);  // 向下速度
+    r.nes.poke(r.addr("hero.ground"), 0);  // 空中
+    
+    // 运行 10 帧，应该落地
+    frames(&mut r, 10, 0);
+    
+    let y = r.u8("hero.y");
+    let ground = r.u8("hero.ground");
+    
+    // 地面在 row 21 = y 168，英雄高 16px，所以应该在 y=152
+    assert!(y >= 150 && y <= 170, "hero y should be near ground, got {}", y);
+    assert_eq!(ground, 1, "hero should be grounded, not falling through solid ground");
+}

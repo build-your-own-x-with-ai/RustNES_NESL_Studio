@@ -52,3 +52,31 @@ fn mapper2_detects_bus_conflicts() {
     assert_eq!(nes.bus.bus_conflicts, 1);
     assert_eq!(nes.peek(0x8000), 0x00, "AND of written & ROM: 0xFF & 0x00 = 0x00, bank unchanged");
 }
+
+/// Writes `val` to nametable address `addr` through PPUADDR/PPUDATA.
+fn ppu_write(nes: &mut TestNes, addr: u16, val: u8) {
+    nes.poke(0x2006, (addr >> 8) as u8);
+    nes.poke(0x2006, addr as u8);
+    nes.poke(0x2007, val);
+}
+
+#[test]
+fn horizontal_mirroring_folds_2400_onto_2000() {
+    let rom = unrom4(); // flags6 = 0x20: mirroring bit clear = horizontal
+    let mut nes = TestNes::from_ines(&rom).unwrap();
+    ppu_write(&mut nes, 0x2000, 0x11);
+    ppu_write(&mut nes, 0x2400, 0x22);
+    assert_eq!(nes.bus.vram[0x2000], 0x22, "$2400 mirrors $2000 with horizontal mirroring");
+}
+
+#[test]
+fn vertical_mirroring_keeps_2000_and_2400_separate() {
+    let mut rom = unrom4();
+    rom[6] |= 0x01; // vertical
+    let mut nes = TestNes::from_ines(&rom).unwrap();
+    ppu_write(&mut nes, 0x2000, 0x11);
+    ppu_write(&mut nes, 0x2400, 0x22);
+    ppu_write(&mut nes, 0x2800, 0x33);
+    assert_eq!(nes.bus.vram[0x2000], 0x33, "$2800 mirrors $2000 with vertical mirroring");
+    assert_eq!(nes.bus.vram[0x2400], 0x22);
+}

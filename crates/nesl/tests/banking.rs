@@ -105,3 +105,11 @@ fn programs_up_to_32kb_of_prg_stay_nrom() {
     assert!(out.prg_used > 24 * 1024, "{}", out.prg_used);
     assert_eq!(out.mapper, 0, "CHR is a separate chip in NROM; only PRG counts");
 }
+
+#[test]
+fn unrom_roms_use_vertical_mirroring_for_horizontal_scrolling() {
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/quest.nesl")).unwrap();
+    let out = nesl::compile(&src).unwrap();
+    assert_eq!(out.mapper, 2);
+    assert_eq!(out.rom[6] & 0x01, 0x01, "flags6 bit 0 must be set (vertical mirroring)");
+}

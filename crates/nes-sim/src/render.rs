@@ -2,7 +2,7 @@
 //! PPUCTRL / PPUSCROLL writes into a 256x240 frame of NES colour indices (0-63), so the
 //! result can be compared pixel by pixel with another emulator.
 //!
-//! Model: 8x8 sprites, vertical mirroring, no emphasis or greyscale. The horizontal
+//! Model: 8x8 sprites, header mirroring (vertical or horizontal; vertical scroll ignores the nametable bit), no emphasis or greyscale. The horizontal
 //! scroll for line y is whatever was written before dot 257 of the line above (when the
 //! PPU copies it); the vertical scroll is taken at the pre-render line.
 
@@ -45,8 +45,7 @@ fn bg_pixel(bus: &NesBus, ctrl: u8, sx: u8, sy: u8, x: usize, y: usize) -> (u8, 
     if wy >= 240 {
         wy -= 240;
     }
-    // vertical mirroring: $2000/$2800 and $2400/$2C00
-    let nt = 0x2000 + ((wx >> 8) & 1) * 0x400;
+    let nt = bus.nt_base(wx);
     let (tx, ty) = ((wx & 0xFF) / 8, wy / 8);
     let tile = bus.vram[nt + ty * 32 + tx] as usize;
     let attr = bus.vram[nt + 0x3C0 + (ty / 4) * 8 + tx / 4];

@@ -5,7 +5,8 @@ use nes_sim::{NesBus, TestNes};
 /// Builds a 16KB-PRG / 8KB-CHR mapper-0 iNES image. `prog` is placed at $8000 (reset),
 /// `nmi` at $9000 (NMI vector).
 fn rom(prog: &[u8], nmi: &[u8]) -> Vec<u8> {
-    let mut v = vec![b'N', b'E', b'S', 0x1A, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut v = vec![b'N', b'E', b'S', 0x1A, 1, 1, 0x01, 0, // vertical mirroring
+         0, 0, 0, 0, 0, 0, 0, 0];
     let mut prg = vec![0xEA; 0x4000];
     prg[..prog.len()].copy_from_slice(prog);
     prg[0x1000..0x1000 + nmi.len()].copy_from_slice(nmi);
@@ -54,7 +55,8 @@ fn prg_16k_is_mirrored_and_32k_is_flat() {
     assert_eq!(nes.peek(0xC000), 0xA9);
     assert_eq!(nes.peek(0xC001), 0x42);
 
-    let mut r = vec![b'N', b'E', b'S', 0x1A, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut r = vec![b'N', b'E', b'S', 0x1A, 2, 0, 0x01, 0, // vertical mirroring
+         0, 0, 0, 0, 0, 0, 0, 0];
     let mut prg = vec![0u8; 0x8000];
     prg[0] = 0x12;
     prg[0x4000] = 0x34;

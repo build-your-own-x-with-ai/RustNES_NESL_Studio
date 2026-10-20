@@ -545,14 +545,6 @@ impl Codegen {
         }
     }
 
-    /// PTR = tiles, PTR2 = attributes, ARG2 = width, ARG3 = map id.
-    fn map_setup(&mut self, m: &MapArg) {
-        self.map_select(m);
-        self.map_ptrs(m);
-        self.map_byte(m, false, ARG2);
-        self.map_byte(m, true, ARG3);
-    }
-
     fn pointer(&mut self, label: &str) {
         self.e.ins(LDA, Operand::imm_lo(label));
         self.e.abs(STA, PTR);

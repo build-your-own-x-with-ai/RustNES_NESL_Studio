@@ -48,6 +48,8 @@ pub struct NesBus {
     prg_bank: usize,
     /// Total PRG banks.
     prg_banks: usize,
+    /// Nametable mirroring from iNES flags6 bit 0: false = vertical (bit set), true = horizontal.
+    pub(crate) horizontal: bool,
     oam_addr: u8,
     write_toggle: bool,
     ppu_addr: u16,
@@ -80,6 +82,7 @@ impl NesBus {
             mapper: 0,
             prg_bank: 0,
             prg_banks: 1,
+            horizontal: false,
             oam_addr: 0,
             write_toggle: false,
             ppu_addr: 0,
@@ -130,6 +133,21 @@ impl NesBus {
         a as usize
     }
 
+    /// VRAM index for a PPU address, with nametables folded by the cartridge's mirroring.
+    pub(crate) fn nt_index(&self, addr: u16) -> usize {
+        let i = Self::vram_index(addr);
+        if !(0x2000..0x3F00).contains(&i) {
+            return i;
+        }
+        let a = 0x2000 | (i & 0x0FFF);
+        if self.horizontal { a & !0x400 } else { a & !0x800 }
+    }
+
+    /// Base address of the nametable that screen-space column `wx` (0-511) reads from.
+    pub(crate) fn nt_base(&self, wx: usize) -> usize {
+        if self.horizontal { 0x2000 } else { 0x2000 + ((wx >> 8) & 1) * 0x400 }
+    }
+
     fn ppu_increment(&mut self) {
         let inc = if self.ppuctrl & 0x04 != 0 { 32 } else { 1 };
         self.ppu_addr = self.ppu_addr.wrapping_add(inc) & 0x3FFF;
@@ -163,7 +181,7 @@ impl NesBus {
         if wy >= 240 {
             wy -= 240; // vertical mirroring: the vertical nametable bit has no effect
         }
-        let nt = 0x2000 + ((wx >> 8) & 1) * 0x400; // vertical mirroring
+        let nt = self.nt_base(wx as usize) as u16;
         let tile = self.vram[(nt + (wy / 8) * 32 + (wx & 0xFF) / 8) as usize] as u16;
         let base = if self.ppuctrl & 0x10 != 0 { 0x1000 } else { 0 };
         let a = (base + tile * 16 + wy % 8) as usize;
@@ -233,10 +251,10 @@ impl Bus for NesBus {
                 4 => self.oam[self.oam_addr as usize],
                 7 => {
                     let a = self.ppu_addr;
-                    let val = self.vram[Self::vram_index(a)];
+                    let val = self.vram[self.nt_index(a)];
                     let out = if a >= 0x3F00 {
                         // Palette reads are unbuffered; buffer gets the nametable underneath.
-                        self.read_buffer = self.vram[Self::vram_index(a - 0x1000)];
+                        self.read_buffer = self.vram[self.nt_index(a - 0x1000)];
                         val
                     } else {
                         std::mem::replace(&mut self.read_buffer, val)
@@ -287,7 +305,8 @@ impl Bus for NesBus {
                 }
                 7 => {
                     self.check_vram_access();
-                    self.vram[Self::vram_index(self.ppu_addr)] = val;
+                    let i = self.nt_index(self.ppu_addr);
+                    self.vram[i] = val;
                     self.ppu_increment();
                 }
                 _ => {}
@@ -325,7 +344,7 @@ impl TestNes {
         self.bus.write(addr, val);
     }
 
-    /// Parses an iNES image (mapper 0 only), loads PRG/CHR and resets the CPU.
+    /// Parses an iNES image (mapper 0 or 2), loads PRG/CHR and resets the CPU.
     pub fn from_ines(rom: &[u8]) -> Result<TestNes, String> {
         if rom.len() < 16 || &rom[0..4] != b"NES\x1A" {
             return Err("not an iNES file (missing NES\\x1A header)".into());
@@ -357,6 +376,7 @@ impl TestNes {
         let mut bus = NesBus::new(prg, chr);
         bus.mapper = mapper;
         bus.prg_banks = prg_banks;
+        bus.horizontal = rom[6] & 0x01 == 0 && rom[6] & 0x08 == 0;
         if !bus.chr.is_empty() {
             let n = bus.chr.len().min(0x2000);
             bus.vram[..n].copy_from_slice(&bus.chr[..n]);

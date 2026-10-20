@@ -24,7 +24,7 @@ pub fn build_unrom(banks: Vec<Vec<u8>>, fixed: &[u8], nmi: u16, reset: u16, irq:
         b'N', b'E', b'S', 0x1A,
         prg_banks as u8,
         0, // CHR count = 0 (CHR-RAM)
-        0x20, // flags6: mapper 2 low nibble, vertical mirroring
+        0x21, // flags6: mapper 2 low nibble, bit 0 = vertical mirroring
         0x00, // flags7: mapper 2 high nibble
     ];
     rom.resize(16, 0);

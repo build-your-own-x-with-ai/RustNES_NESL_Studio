@@ -21,6 +21,9 @@ tile '|' = ["...11...", "...3333.", "...33333", "...3333.", "...3....", "...3...
 tile 1 = ["...3333.", "..333333", "..311.1.", "..31111.", "...1111.", "..2222..", ".222222.", ".2.22.2."];
 tile 2 = [".2.22.2.", "..2222..", "..2..2..", "..2..2..", "..2..2..", ".33..33.", ".33..33.", "33...33."];
 tile 3 = ["........", "..2222..", ".222222.", "2212212.", "22222222", "22222222", "2.2.2.22", "........"];
+tile 4 = ["........", "..3..3..", ".333333.", "32222223", "22222222", "2.2222.2", "22....22", "........"];
+tile 5 = ["3......3", "33....33", "3332233.", ".322223.", "..2112..", "...22...", "........", "........"];
+tile 6 = ["........", "........", "...22...", ".322223.", "33211233", "33.22.33", "3......3", "........"];
 metasprite HERO = [(0, 0, 1), (0, 8, 2)];
 
 const WORLDS: [map] = [W1, W2, W3, W4, W5, W6];   // the maps are declared at the end of the file
@@ -35,9 +38,16 @@ const FLAG_COL = 123;
 const FOE_COL: [u8] = [20, 50, 72, 100,   15, 30, 45, 58, 82, 100,   12, 30, 52, 62, 75, 92, 110,
                        10, 28, 50, 72, 92, 114,   8, 26, 44, 62, 80, 98, 116,   8, 24, 40, 58, 76, 94, 110, 118];
 const FOE_FROM: [u8] = [0, 4, 10, 17, 23, 30, 38];
+// 0 slime (walks), 1 hopper (walks and jumps), 2 bat (flies in a wave, ignores walls)
+const FOE_KIND: [u8] = [0, 0, 0, 0,   0, 1, 0, 1, 0, 0,   0, 1, 2, 0, 1, 2, 0,
+                        1, 2, 0, 1, 2, 1,   2, 1, 0, 2, 1, 2, 0,   1, 2, 1, 0, 2, 1, 2, 0];
+const WAVE: [i8] = [0, 6, 11, 15, 16, 15, 11, 6, 0, -6, -11, -15, -16, -15, -11, -6];
+const BAT_Y = 120;
+sound STOMP = (pulse, 0x1A0, -12, 8, 12, 2);
+sound HOP = (pulse, 0x180, -20, 6, 6, 1);
 
 struct Body { x: u16, y: u8, vy: i8, ground: u8 }
-struct Foe { x: u16, y: u8, dir: i8, alive: u8 }
+struct Foe { x: u16, y: u8, dir: i8, alive: u8, kind: u8, vy: i8, t: u8 }
 
 var hero: Body;
 var foes: [Foe; 8];
@@ -51,6 +61,7 @@ var hurt: u8;           // invulnerable frames after a hit
 var timer: u8;
 var prev: u8;
 var cam: u16;
+var ticks: u16;
 
 fn solid(x: u16, y: u8) -> u8 {
     let t = map_tile(WORLDS[world], x >> 3, y >> 3);
@@ -70,6 +81,10 @@ fn spawn() {
         foes[nfoes].y = GROUND_Y - 8;
         foes[nfoes].dir = -1;
         foes[nfoes].alive = 1;
+        foes[nfoes].kind = FOE_KIND[k];
+        foes[nfoes].vy = 0;
+        foes[nfoes].t = nfoes << 4;
+        if FOE_KIND[k] == 2 { foes[nfoes].y = BAT_Y; }
         nfoes += 1;
     }
 }
@@ -144,28 +159,63 @@ fn update_hero(pad: u8, pressed: u8) {
     if hero.y > 216 { lose_life(); }
 }
 
+fn walk(i: u8) {
+    let ahead = foes[i].x - 1;
+    if foes[i].dir > 0 { ahead = foes[i].x + 8; }
+    if solid(ahead, foes[i].y + 4) || !solid(ahead, foes[i].y + 8) {
+        foes[i].dir = -foes[i].dir;
+    } else {
+        foes[i].x += foes[i].dir;
+    }
+}
+
+fn hop(i: u8) {
+    if foes[i].vy == 0 && solid(foes[i].x + 4, foes[i].y + 8) {
+        if foes[i].t & 63 == 0 { foes[i].vy = -6; sfx(HOP); return; }
+        if frame_count() & 1 { walk(i); }
+        return;
+    }
+    if foes[i].vy < 4 { foes[i].vy += 1; }
+    let ny = foes[i].y + foes[i].vy;
+    if foes[i].vy > 0 && solid(foes[i].x + 4, ny + 8) {
+        foes[i].y = ((ny + 8) & 0xF8) - 8;
+        foes[i].vy = 0;
+    } else {
+        foes[i].y = ny;
+        foes[i].x += foes[i].dir;
+    }
+    if foes[i].y > 216 { foes[i].alive = 0; }
+}
+
+fn fly(i: u8) {
+    if foes[i].t & 1 { foes[i].x += foes[i].dir; }
+    if foes[i].t & 127 == 0 { foes[i].dir = -foes[i].dir; }
+    foes[i].y = BAT_Y + WAVE[(foes[i].t >> 2) & 15];
+}
+
 fn update_foes() {
     let hx = hero.x - cam;
     for i in 0..nfoes {
         if !foes[i].alive { hide_sprite(3 + i); continue; }
-        if frame_count() & 1 {
-            let ahead = foes[i].x - 1;
-            if foes[i].dir > 0 { ahead = foes[i].x + 8; }
-            if solid(ahead, foes[i].y + 4) || !solid(ahead, foes[i].y + 8) {
-                foes[i].dir = -foes[i].dir;
-            } else {
-                foes[i].x += foes[i].dir;
-            }
+        foes[i].t += 1;
+        match foes[i].kind {
+            0 => { if frame_count() & 1 { walk(i); } }
+            1 => hop(i),
+            _ => fly(i),
         }
         let fx = foes[i].x - cam;
         if fx >= 248 { hide_sprite(3 + i); continue; }
-        sprite(3 + i, fx as u8, foes[i].y, 3, 1);
+        match foes[i].kind {
+            0 => sprite(3 + i, fx as u8, foes[i].y, 3, 1),
+            1 => sprite(3 + i, fx as u8, foes[i].y, 4, 3),
+            _ => sprite(3 + i, fx as u8, foes[i].y, 5 + ((foes[i].t >> 3) & 1), 2),
+        }
         if collide(hx as u8, hero.y, 8, 16, fx as u8, foes[i].y, 8, 8) {
             if hero.vy > 0 && hero.y + 12 < foes[i].y {
                 foes[i].alive = 0;
                 hero.vy = -4;
                 score += 50;
-                sfx(SFX_HIT);
+                sfx(STOMP);
             } else if hurt == 0 {
                 hurt = 60;
                 lose_life();
@@ -180,6 +230,7 @@ fn main() {
     ppu_on();
     loop {
         wait_vblank();
+        ticks += 1;
         let pad = joypad(0);
         let pressed = pad & ~prev;
         prev = pad;

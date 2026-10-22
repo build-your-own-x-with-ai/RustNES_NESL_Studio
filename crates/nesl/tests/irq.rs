@@ -102,3 +102,17 @@ fn irq_errors() {
     assert!(msg("fn main() { split_scroll(3); }").contains("only inside `fn irq()`"));
     assert!(msg("fn main() { scanline_irq(10); }").contains("needs `fn irq()`"));
 }
+
+#[test]
+fn split_example_keeps_the_top_still_and_scrolls_the_rest() {
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/split.nesl")).unwrap();
+    let mut r = run_frames(&src, 30, |_| {});
+    assert_eq!(r.out.mapper, 4);
+    let a = render::frame(&r.nes.bus, r.nes.frames - 1);
+    r.nes.run_frames(10).unwrap();
+    let b = render::frame(&r.nes.bus, r.nes.frames - 1);
+    let rows = |p: &[u8], ys: std::ops::Range<usize>| p[ys.start * 256..ys.end * 256].to_vec();
+    assert_eq!(rows(&a, 0..22), rows(&b, 0..22), "status rows do not move");
+    assert_ne!(rows(&a, 28..240), rows(&b, 28..240), "the field below scrolls");
+    assert_eq!(r.nes.bus.render_conflicts, 0);
+}

@@ -2,7 +2,7 @@
 //! PPUCTRL / PPUSCROLL writes into a 256x240 frame of NES colour indices (0-63), so the
 //! result can be compared pixel by pixel with another emulator.
 //!
-//! Model: 8x8 sprites, header mirroring (vertical or horizontal; vertical scroll ignores the nametable bit), no emphasis or greyscale. The horizontal
+//! Model: 8x8 sprites, CHR read through the mapper's banking, header mirroring (vertical or horizontal; vertical scroll ignores the nametable bit), no emphasis or greyscale. The horizontal
 //! scroll for line y is whatever was written before dot 257 of the line above (when the
 //! PPU copies it); the vertical scroll is taken at the pre-render line.
 
@@ -54,7 +54,7 @@ fn bg_pixel(bus: &NesBus, ctrl: u8, sx: u8, sy: u8, x: usize, y: usize) -> (u8, 
     let base = if ctrl & 0x10 != 0 { 0x1000 } else { 0 };
     let a = base + tile * 16 + wy % 8;
     let bit = 7 - (wx % 8);
-    let c = ((bus.vram[a] >> bit) & 1) | ((bus.vram[a + 8] >> bit) & 1) << 1;
+    let c = ((bus.chr_peek(a as u16) >> bit) & 1) | ((bus.chr_peek(a as u16 + 8) >> bit) & 1) << 1;
     (c, pal)
 }
 
@@ -71,7 +71,7 @@ fn sprite_pixel(bus: &NesBus, ctrl: u8, x: usize, y: usize) -> Option<(u8, u8, b
         let col = if attr & 0x40 != 0 { 7 - (x - left) } else { x - left };
         let a = base + tile * 16 + row;
         let bit = 7 - col;
-        let c = ((bus.vram[a] >> bit) & 1) | ((bus.vram[a + 8] >> bit) & 1) << 1;
+        let c = ((bus.chr_peek(a as u16) >> bit) & 1) | ((bus.chr_peek(a as u16 + 8) >> bit) & 1) << 1;
         if c != 0 {
             return Some((c, attr & 3, attr & 0x20 != 0));
         }

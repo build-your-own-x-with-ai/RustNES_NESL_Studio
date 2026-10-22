@@ -64,6 +64,10 @@ pub struct Codegen {
     has_map_lists: bool,
     /// Compile in banked mode (UNROM): maps go in switchable banks, not inline data.
     pub(crate) banked: bool,
+    /// `fn irq()` is declared: build for MMC3 (scanline IRQ).
+    pub(crate) mmc3: bool,
+    /// Compiling the body of `fn irq()`.
+    pub(crate) in_irq: bool,
     declared_maps: Vec<(String, Vec<u8>, Vec<u8>)>,
     scopes: Vec<HashMap<String, Sym>>,
     /// (continue label, break label) for each enclosing loop.
@@ -196,6 +200,8 @@ impl Codegen {
             map_table: Vec::new(),
             has_map_lists: false,
             banked: false,
+            mmc3: false,
+            in_irq: false,
             declared_maps: Vec::new(),
             scopes: Vec::new(),
             loops: Vec::new(),
@@ -216,7 +222,8 @@ impl Codegen {
     // ------------------------------------------------------------------ program
 
     pub fn program(&mut self, prog: &Program) {
-        runtime::emit_core(&mut self.e, self.banked);
+        self.mmc3 = prog.items.iter().any(|d| matches!(d, Decl::Fn(f) if f.name == "irq"));
+        runtime::emit_core(&mut self.e, self.banked, self.mmc3);
         if self.banked {
             runtime::emit_banked(&mut self.e);
         }
@@ -288,6 +295,15 @@ impl Codegen {
                 self.errors.push(Diagnostic::new(pos.unwrap_or_default(), "`main` must take no parameters and return nothing"));
             }
             _ => {}
+        }
+        if let Some(sig) = self.funcs.get("irq") {
+            if !sig.params.is_empty() || sig.ret.is_some() {
+                let pos = prog.items.iter().find_map(|d| match d {
+                    Decl::Fn(f) if f.name == "irq" => Some(f.pos),
+                    _ => None,
+                });
+                self.errors.push(Diagnostic::new(pos.unwrap_or_default(), "`irq` must take no parameters and return nothing"));
+            }
         }
         if let Err(e) = self.check_recursion(prog) {
             self.errors.push(e);
@@ -1717,6 +1733,13 @@ impl Codegen {
         let Some(sig) = self.funcs.get(name) else {
             return self.err(pos, format!("unknown function `{name}`"));
         };
+        if name == "irq" {
+            return self.err(pos, "`irq` runs on the scanline interrupt and cannot be called");
+        }
+        if self.in_irq {
+            // Function locals are static, so a call could clobber the interrupted code's.
+            return self.err(pos, format!("`fn irq()` cannot call `{name}` (only built-in functions)"));
+        }
         let (params, ret, label) = (sig.params.clone(), sig.ret, sig.label.clone());
         if args.len() != params.len() {
             let s = if params.len() == 1 { "" } else { "s" };
@@ -1768,7 +1791,9 @@ impl Codegen {
         self.e.comment(format!("---- fn {} ----", f.name));
         self.e.label(&label);
         self.scopes = vec![scope];
+        self.in_irq = f.name == "irq";
         self.block(&f.body);
+        self.in_irq = false;
         self.scopes.clear();
         self.e.imp(RTS);
     }

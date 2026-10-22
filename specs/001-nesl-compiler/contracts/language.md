@@ -90,6 +90,8 @@ f(x, y);                               // 表达式语句
 > v6（[006-map-edit-status](../../006-map-edit-status/contracts/api.md)）新增：`set_map_tile` / `reset_map`、`status_bar`。
 > v7（[009-quest](../../009-quest/spec.md)）新增：地图列表 `const L: [map] = [...]` 与 `L[i]`、`print_u16`；`set_map_tile` 的列改为 u16。
 
+> v13（[013-mmc3](../../013-mmc3/IMPLEMENTATION.md)）新增：声明 `fn irq()` 的程序编译为 MMC3（32KB PRG）；`scanline_irq(line: u8)` 每帧在第 line 行调用 `irq()`（0 关闭）；`split_scroll(x: u16)` 只能在 `irq()` 里用，从当前行起改水平卷轴。`irq()` 不能被调用，也不能调用用户函数。
+
 ## 限制（v1）
 - 不支持递归、指针、结构体、有符号数、u16 数组、u16 乘除。
 - 数组下标为 u8，数组长度 ≤ 256。

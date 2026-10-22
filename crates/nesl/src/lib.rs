@@ -84,6 +84,20 @@ pub fn compile(src: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
     
     // Try NROM assembly at $8000
     let asm_nrom = asm::assemble(&cg_temp.e.items, 0x8000);
+    if cg_temp.mmc3 {
+        let asm = asm_nrom.map_err(|m| vec![Diagnostic::new(top, m)])?;
+        let sym = |n: &str| asm.symbols[n];
+        let rom = rom::build_mmc3(&asm.code, sym("__nmi"), sym("__reset"), sym("__irq"), &chr)
+            .map_err(|m| vec![Diagnostic::new(top, m)])?;
+        return Ok(CompileOutput {
+            rom,
+            prg_used: asm.code.len(),
+            mapper: 4,
+            symbols: asm.symbols,
+            vars: cg_temp.vars,
+            listing: asm.listing,
+        });
+    }
     let use_unrom = if let Ok(asm) = &asm_nrom {
         asm.code.len() > 32762 // CHR is a separate 8KB chip in NROM
     } else {

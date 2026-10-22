@@ -287,6 +287,18 @@ impl Cpu {
         self.cycles += 7;
     }
 
+    /// Maskable interrupt: ignored while I is set; otherwise like NMI via $FFFE. 7 cycles.
+    pub fn irq<B: Bus>(&mut self, bus: &mut B) {
+        if self.p & FLAG_I != 0 {
+            return;
+        }
+        self.push16(bus, self.pc);
+        self.push(bus, (self.p & !FLAG_B) | FLAG_U);
+        self.p |= FLAG_I;
+        self.pc = read16(bus, 0xFFFE);
+        self.cycles += 7;
+    }
+
     fn set_zn(&mut self, v: u8) {
         self.set_flag(FLAG_Z, v == 0);
         self.set_flag(FLAG_N, v & 0x80 != 0);

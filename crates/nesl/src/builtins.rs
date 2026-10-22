@@ -99,6 +99,8 @@ pub fn signature(name: &str) -> Option<Signature> {
         // play_music takes 1 to 3 songs; the arity is checked in builtin_call
         "play_music" => sig!(Music => None),
         "stop_music" => sig!(=> None),
+        "scanline_irq" => sig!(U8 => None),
+        "split_scroll" => sig!(U16 => None),
         _ => return None,
     })
 }
@@ -141,6 +143,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("stop_music", "stop_music()", "停止音乐"),
     ("save_game", "save_game()", "将全局变量写入存档（SRAM）"),
     ("load_game", "load_game() -> u8", "从存档载入变量；存档存在返回 1，否则返回 0"),
+    ("scanline_irq", "scanline_irq(line: u8)", "每帧在第 line 行调用 fn irq()（MMC3）；0 关闭"),
+    ("split_scroll", "split_scroll(x: u16)", "只能在 fn irq() 里用：从当前行起水平卷轴改为 x"),
 ];
 
 pub fn is_builtin_fn(name: &str) -> bool {
@@ -167,6 +171,33 @@ impl Codegen {
             "save_game" => self.e.jsr("__save_game"),
             "load_game" => self.e.jsr("__load_game"),
             "stop_music" => self.e.jsr("__stop_music"),
+            "scanline_irq" => {
+                if !self.mmc3 {
+                    return self.err(pos, "`scanline_irq` needs `fn irq()` (the MMC3 scanline interrupt)");
+                }
+                self.arg(&args[0], Type::U8)?;
+                self.e.abs(STA, IRQ_LINE);
+            }
+            "split_scroll" => {
+                if !self.in_irq {
+                    return self.err(pos, "`split_scroll` works only inside `fn irq()`");
+                }
+                self.arg(&args[0], Type::U16)?;
+                // A = x low, X = x high: nametable bit 0 of PPUCTRL, then $2005 (x, y = 0)
+                self.e.abs(STA, TMP0);
+                self.e.imp(TXA);
+                self.e.imm(AND, 1);
+                self.e.abs(STA, TMP1);
+                self.e.abs(LDA, CTRL_SHADOW);
+                self.e.imm(AND, 0xFE);
+                self.e.abs(ORA, TMP1);
+                self.e.abs(BIT, PPUSTATUS);
+                self.e.abs(STA, PPUCTRL);
+                self.e.abs(LDA, TMP0);
+                self.e.abs(STA, PPUSCROLL);
+                self.e.imm(LDA, 0);
+                self.e.abs(STA, PPUSCROLL);
+            }
             "stop_sound" => {
                 self.e.imm(LDA, 0);
                 self.e.abs(STA, MU_ON);

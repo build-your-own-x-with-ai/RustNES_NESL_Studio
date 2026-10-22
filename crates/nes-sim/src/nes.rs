@@ -16,6 +16,21 @@ pub fn pixel_cycle(x: u8, y: u8) -> u64 {
     VBLANK_CYCLES + (341 * (1 + y as u64) + x as u64) / 3
 }
 
+/// Rendered lines per frame that clock the MMC3 counter: the pre-render line and 240 visible.
+const CLOCKED_LINES: u64 = 241;
+
+/// Number of MMC3 scanline clocks (dot 260 of the pre-render line and each visible line)
+/// that happened before absolute CPU cycle `c`.
+fn scanline_clocks(c: u64) -> u64 {
+    let (frame, rel) = (c / CYCLES_PER_FRAME, c % CYCLES_PER_FRAME);
+    // clock k (0 = pre-render) is at rel cycle VBLANK_CYCLES + (341 * k + 260) / 3
+    let in_frame = match (rel * 3).checked_sub(VBLANK_CYCLES * 3 + 260) {
+        Some(0) | None => 0,
+        Some(d) => (d.div_ceil(341)).min(CLOCKED_LINES),
+    };
+    frame * CLOCKED_LINES + in_frame
+}
+
 #[derive(Clone)]
 pub struct NesBus {
     pub ram: [u8; 0x800],
@@ -59,6 +74,8 @@ pub struct NesBus {
     mmc3_irq_counter: u8,
     mmc3_irq_enabled: bool,
     mmc3_irq_reload: bool,
+    /// MMC3 IRQ line (level): set when the counter reaches 0, cleared by a $E000 write.
+    pub irq_pending: bool,
     /// Number of CHR banks (for mapper 4).
     chr_banks: usize,
     oam_addr: u8,
@@ -106,6 +123,7 @@ impl NesBus {
             mmc3_irq_counter: 0,
             mmc3_irq_enabled: false,
             mmc3_irq_reload: false,
+            irq_pending: false,
             chr_banks: 0,
             oam_addr: 0,
             write_toggle: false,
@@ -344,6 +362,19 @@ impl NesBus {
         None
     }
 
+    /// One MMC3 scanline clock (the PPU's A12 rise near dot 260 of each rendered line).
+    fn mmc3_clock(&mut self) {
+        if self.mmc3_irq_counter == 0 || self.mmc3_irq_reload {
+            self.mmc3_irq_counter = self.mmc3_irq_latch;
+            self.mmc3_irq_reload = false;
+        } else {
+            self.mmc3_irq_counter -= 1;
+        }
+        if self.mmc3_irq_counter == 0 && self.mmc3_irq_enabled {
+            self.irq_pending = true;
+        }
+    }
+
     fn check_vram_access(&mut self) {
         let rendering = self.ppumask & 0x18 != 0;
         let in_vblank = self.now % CYCLES_PER_FRAME < VBLANK_CYCLES;
@@ -457,8 +488,14 @@ impl Bus for NesBus {
                         self.horizontal = val & 1 != 0;
                     }
                     0xC000 => self.mmc3_irq_latch = val,
-                    0xC001 => self.mmc3_irq_counter = 0, // reload
-                    0xE000 => self.mmc3_irq_enabled = false,
+                    0xC001 => {
+                        self.mmc3_irq_counter = 0;
+                        self.mmc3_irq_reload = true;
+                    }
+                    0xE000 => {
+                        self.mmc3_irq_enabled = false;
+                        self.irq_pending = false;
+                    }
                     0xE001 => self.mmc3_irq_enabled = true,
                     _ => {}
                 }
@@ -527,14 +564,8 @@ impl TestNes {
         bus.chr_banks = chr_banks;
         bus.horizontal = rom[6] & 0x01 == 0 && rom[6] & 0x08 == 0;
         if mapper == 4 {
-        if mapper == 4 {
-            // MMC3: initialize CHR bank registers to identity (0-5) and PRG to 0
-            for i in 0..6 {
-                bus.mmc3_bank_data[i] = i as u8;
-            }
-            bus.mmc3_bank_data[6] = 0; // PRG bank at $8000/$C000
-            bus.mmc3_bank_data[7] = 1; // PRG bank at $A000
-        }
+            // MMC3: CHR registers start as identity (0-5); R6/R7 map PRG banks 0/1
+            bus.mmc3_bank_data = [0, 1, 2, 3, 4, 5, 0, 1];
         }
         if !bus.chr.is_empty() && mapper != 4 {
             let n = bus.chr.len().min(0x2000);
@@ -558,6 +589,14 @@ impl TestNes {
             if self.bus.ppuctrl & 0x80 != 0 {
                 self.cpu.nmi(&mut self.bus);
             }
+        }
+        if self.bus.mapper == 4 && self.bus.ppumask & 0x18 != 0 {
+            for _ in scanline_clocks(before)..scanline_clocks(self.cpu.cycles) {
+                self.bus.mmc3_clock();
+            }
+        }
+        if self.bus.irq_pending {
+            self.cpu.irq(&mut self.bus);
         }
         // Rendering of the visible picture starts: latch this frame's sprite-0 hit.
         let frame_start = self.frames * CYCLES_PER_FRAME;

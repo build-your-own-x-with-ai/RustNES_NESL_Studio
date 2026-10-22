@@ -133,3 +133,70 @@ fn mmc3_switches_chr_banks() {
     assert_eq!(nes.bus.chr_peek(0x1000), 0x44, "R2 (default 2) at $1000");
 }
 
+
+/// MMC3 ROM whose fixed bank runs: rendering on (PPUMASK = `mask`), IRQ latch = 9,
+/// reload, enable, CLI, spin. The IRQ handler at $E01A does INC $10, acknowledges
+/// ($E000), re-enables ($E001) and returns.
+fn mmc3_irq_rom(mask: u8) -> Vec<u8> {
+    let mut rom = mmc3_rom();
+    #[rustfmt::skip]
+    let code = [
+        0x78,                   // E000 SEI
+        0xA9, 0x00,             // E001 LDA #0
+        0x8D, 0x00, 0x20,       // E003 STA $2000
+        0xA9, mask,             // E006 LDA #mask
+        0x8D, 0x01, 0x20,       // E008 STA $2001
+        0xA9, 0x09,             // E00B LDA #9
+        0x8D, 0x00, 0xC0,       // E00D STA $C000  latch
+        0x8D, 0x01, 0xC0,       // E010 STA $C001  reload
+        0x8D, 0x01, 0xE0,       // E013 STA $E001  enable
+        0x58,                   // E016 CLI
+        0x4C, 0x17, 0xE0,       // E017 JMP $E017
+        0xE6, 0x10,             // E01A INC $10    (IRQ handler)
+        0x8D, 0x00, 0xE0,       // E01C STA $E000  acknowledge
+        0x8D, 0x01, 0xE0,       // E01F STA $E001  re-enable
+        0x40,                   // E022 RTI
+    ];
+    let fixed = 16 + 7 * 0x2000;
+    rom[fixed..fixed + code.len()].copy_from_slice(&code);
+    for (off, v) in [(0x1FFA, 0x22u8), (0x1FFB, 0xE0), (0x1FFC, 0x00), (0x1FFD, 0xE0), (0x1FFE, 0x1A), (0x1FFF, 0xE0)] {
+        rom[fixed + off] = v;
+    }
+    rom
+}
+
+const IRQ_HANDLER: u16 = 0xE01A;
+
+#[test]
+fn mmc3_irq_fires_after_latch_scanlines() {
+    use nes_sim::nes::{CYCLES_PER_FRAME, VBLANK_CYCLES};
+    let mut nes = TestNes::from_ines(&mmc3_irq_rom(0x18)).unwrap();
+    nes.run_until_pc(IRQ_HANDLER, CYCLES_PER_FRAME).unwrap();
+    // The pre-render line reloads the counter to 9; lines 0..=8 count it down, so the IRQ
+    // arrives at dot 260 of line 8 and a handler's changes show from line 9.
+    let expected = VBLANK_CYCLES + (341 * 9 + 260) / 3;
+    let at = nes.cpu.cycles % CYCLES_PER_FRAME;
+    assert!((expected..expected + 20).contains(&at), "first IRQ at cycle {at}, expected ~{expected}");
+    // The next IRQ is 10 scanlines (~1137 CPU cycles) later.
+    let first = nes.cpu.cycles;
+    nes.step().unwrap();
+    nes.run_until_pc(IRQ_HANDLER, CYCLES_PER_FRAME).unwrap();
+    let gap = nes.cpu.cycles - first;
+    assert!((1120..1160).contains(&gap), "IRQ spacing {gap} cycles, expected ~1137 (10 lines)");
+}
+
+#[test]
+fn mmc3_irq_counts_every_frame() {
+    let mut nes = TestNes::from_ines(&mmc3_irq_rom(0x18)).unwrap();
+    nes.run_frames(10).unwrap();
+    // 241 clocks per frame (240 visible + pre-render), one IRQ per 10 clocks
+    let n = nes.peek(0x10) as u64;
+    assert!((240..=242).contains(&n), "IRQs in 10 frames: {n}, expected 241");
+}
+
+#[test]
+fn mmc3_irq_needs_rendering() {
+    let mut nes = TestNes::from_ines(&mmc3_irq_rom(0x00)).unwrap();
+    nes.run_frames(3).unwrap();
+    assert_eq!(nes.peek(0x10), 0, "no scanline clocks while rendering is off");
+}

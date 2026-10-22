@@ -44,14 +44,23 @@ pub struct NesBus {
     pub reg_log: Vec<(u64, u8, u8)>,
     /// Mapper 2 bus conflicts (write value != ROM byte).
     pub bus_conflicts: usize,
-    /// Mapper 0 (NROM) or 2 (UNROM).
-    mapper: u8,
-    /// Mapper 2: current PRG bank in $8000-$BFFF.
-    prg_bank: usize,
+    /// Mapper 0 (NROM), 2 (UNROM), or 4 (MMC3).
+    pub mapper: u8,
+    /// Mapper 2: current PRG bank in $8000-$BFFF. Mapper 4: bank_data[6/7].
+    pub prg_bank: usize,
     /// Total PRG banks.
-    prg_banks: usize,
+    pub prg_banks: usize,
     /// Nametable mirroring from iNES flags6 bit 0: false = vertical (bit set), true = horizontal.
     pub(crate) horizontal: bool,
+    // MMC3 (mapper 4) registers
+    mmc3_bank_select: u8,
+    mmc3_bank_data: [u8; 8],
+    mmc3_irq_latch: u8,
+    mmc3_irq_counter: u8,
+    mmc3_irq_enabled: bool,
+    mmc3_irq_reload: bool,
+    /// Number of CHR banks (for mapper 4).
+    chr_banks: usize,
     oam_addr: u8,
     write_toggle: bool,
     ppu_addr: u16,
@@ -91,6 +100,13 @@ impl NesBus {
             prg_bank: 0,
             prg_banks: 1,
             horizontal: false,
+            mmc3_bank_select: 0,
+            mmc3_bank_data: [0; 8],
+            mmc3_irq_latch: 0,
+            mmc3_irq_counter: 0,
+            mmc3_irq_enabled: false,
+            mmc3_irq_reload: false,
+            chr_banks: 0,
             oam_addr: 0,
             write_toggle: false,
             ppu_addr: 0,
@@ -102,6 +118,75 @@ impl NesBus {
         }
     }
 
+    /// Returns the CHR byte at PPU address (with MMC3 banking if mapper 4).
+    fn chr_read(&self, addr: u16) -> u8 {
+        if self.mapper != 4 || self.chr.is_empty() {
+            return self.vram[addr as usize];
+        }
+        // MMC3: 8 banks of 1KB each ($0000-$1FFF); bit 7 of bank_select swaps $0000/$1000 pattern tables
+        let bank = match addr {
+            0x0000..=0x03FF => {
+                if self.mmc3_bank_select & 0x80 == 0 {
+                    self.mmc3_bank_data[0] & 0xFE
+                } else {
+                    self.mmc3_bank_data[2]
+                }
+            }
+            0x0400..=0x07FF => {
+                if self.mmc3_bank_select & 0x80 == 0 {
+                    self.mmc3_bank_data[0] | 1
+                } else {
+                    self.mmc3_bank_data[3]
+                }
+            }
+            0x0800..=0x0BFF => {
+                if self.mmc3_bank_select & 0x80 == 0 {
+                    self.mmc3_bank_data[1] & 0xFE
+                } else {
+                    self.mmc3_bank_data[4]
+                }
+            }
+            0x0C00..=0x0FFF => {
+                if self.mmc3_bank_select & 0x80 == 0 {
+                    self.mmc3_bank_data[1] | 1
+                } else {
+                    self.mmc3_bank_data[5]
+                }
+            }
+            0x1000..=0x13FF => {
+                if self.mmc3_bank_select & 0x80 == 0 {
+                    self.mmc3_bank_data[2]
+                } else {
+                    self.mmc3_bank_data[0] & 0xFE
+                }
+            }
+            0x1400..=0x17FF => {
+                if self.mmc3_bank_select & 0x80 == 0 {
+                    self.mmc3_bank_data[3]
+                } else {
+                    self.mmc3_bank_data[0] | 1
+                }
+            }
+            0x1800..=0x1BFF => {
+                if self.mmc3_bank_select & 0x80 == 0 {
+                    self.mmc3_bank_data[4]
+                } else {
+                    self.mmc3_bank_data[1] & 0xFE
+                }
+            }
+            0x1C00..=0x1FFF => {
+                if self.mmc3_bank_select & 0x80 == 0 {
+                    self.mmc3_bank_data[5]
+                } else {
+                    self.mmc3_bank_data[1] | 1
+                }
+            }
+            _ => return self.vram[addr as usize],
+        };
+        let off = (bank as usize % (self.chr_banks * 8)) * 0x400 + (addr as usize & 0x3FF);
+        self.chr[off % self.chr.len()]
+    }
+
     fn prg_read(&self, addr: u16) -> u8 {
         if self.prg.is_empty() {
             return 0;
@@ -110,6 +195,31 @@ impl NesBus {
             // UNROM: $8000-$BFFF = switchable, $C000-$FFFF = fixed last bank
             let bank = if addr < 0xC000 { self.prg_bank } else { self.prg_banks - 1 };
             let off = bank * 0x4000 + (addr as usize & 0x3FFF);
+            return self.prg[off % self.prg.len()];
+        }
+        if self.mapper == 4 {
+            // MMC3: $8000-$9FFF and $C000-$DFFF are switchable, $E000-$FFFF = fixed last bank
+            // bit 6 of bank_select swaps $8000/$C000 windows
+            let bank = match addr {
+                0x8000..=0x9FFF => {
+                    if self.mmc3_bank_select & 0x40 == 0 {
+                        self.mmc3_bank_data[6]
+                    } else {
+                        (self.prg_banks * 2 - 2) as u8
+                    }
+                }
+                0xA000..=0xBFFF => self.mmc3_bank_data[7],
+                0xC000..=0xDFFF => {
+                    if self.mmc3_bank_select & 0x40 == 0 {
+                        (self.prg_banks * 2 - 2) as u8
+                    } else {
+                        self.mmc3_bank_data[6]
+                    }
+                }
+                0xE000..=0xFFFF => (self.prg_banks * 2 - 1) as u8,
+                _ => 0,
+            };
+            let off = (bank as usize % (self.prg_banks * 2)) * 0x2000 + (addr as usize & 0x1FFF);
             return self.prg[off % self.prg.len()];
         }
         let off = (addr as usize - 0x8000) % self.prg.len();
@@ -124,6 +234,11 @@ impl NesBus {
             0x8000..=0xFFFF => self.prg_read(addr),
             _ => 0,
         }
+    }
+
+    /// Side-effect-free read of a pattern-table byte ($0000-$1FFF), with mapper CHR banking.
+    pub fn chr_peek(&self, addr: u16) -> u8 {
+        self.chr_read(addr & 0x1FFF)
     }
 
     /// Current PPU address register value (14-bit).
@@ -193,9 +308,9 @@ impl NesBus {
         let nt = self.nt_base(wx as usize) as u16;
         let tile = self.vram[(nt + (wy / 8) * 32 + (wx & 0xFF) / 8) as usize] as u16;
         let base = if self.ppuctrl & 0x10 != 0 { 0x1000 } else { 0 };
-        let a = (base + tile * 16 + wy % 8) as usize;
+        let a = base + tile * 16 + wy % 8;
         let bit = 0x80 >> (wx % 8);
-        (self.vram[a] | self.vram[a + 8]) & bit != 0
+        (self.chr_read(a) | self.chr_read(a + 8)) & bit != 0
     }
 
     /// First screen pixel where an opaque pixel of sprite 0 (8x8) overlaps an opaque
@@ -212,8 +327,8 @@ impl NesBus {
                 break;
             }
             let row = if attr & 0x80 != 0 { 7 - r } else { r };
-            let a = (base + tile as u16 * 16 + row) as usize;
-            let bits = self.vram[a] | self.vram[a + 8];
+            let a = base + tile as u16 * 16 + row;
+            let bits = self.chr_read(a) | self.chr_read(a + 8);
             for c in 0..8u16 {
                 let sx = x as u16 + c;
                 if sx >= 255 {
@@ -260,7 +375,7 @@ impl Bus for NesBus {
                 4 => self.oam[self.oam_addr as usize],
                 7 => {
                     let a = self.ppu_addr;
-                    let val = self.vram[self.nt_index(a)];
+                    let val = if a < 0x2000 { self.chr_read(a) } else { self.vram[self.nt_index(a)] };
                     let out = if a >= 0x3F00 {
                         // Palette reads are unbuffered; buffer gets the nametable underneath.
                         self.read_buffer = self.vram[self.nt_index(a - 0x1000)];
@@ -329,6 +444,25 @@ impl Bus for NesBus {
                 }
                 self.prg_bank = ((val & rom_byte) as usize) % self.prg_banks;
             }
+            0x8000..=0xFFFF if self.mapper == 4 => {
+                // MMC3
+                match addr & 0xE001 {
+                    0x8000 => self.mmc3_bank_select = val,
+                    0x8001 => {
+                        let reg = (self.mmc3_bank_select & 7) as usize;
+                        self.mmc3_bank_data[reg] = val;
+                    }
+                    0xA000 => {
+                        // Mirroring: bit 0 = 0 vertical, 1 horizontal
+                        self.horizontal = val & 1 != 0;
+                    }
+                    0xC000 => self.mmc3_irq_latch = val,
+                    0xC001 => self.mmc3_irq_counter = 0, // reload
+                    0xE000 => self.mmc3_irq_enabled = false,
+                    0xE001 => self.mmc3_irq_enabled = true,
+                    _ => {}
+                }
+            }
             0x4016 => {
                 let new = val & 1 != 0;
                 if self.strobe || new {
@@ -355,7 +489,7 @@ impl TestNes {
         self.bus.write(addr, val);
     }
 
-    /// Parses an iNES image (mapper 0 or 2), loads PRG/CHR and resets the CPU.
+    /// Parses an iNES image (mapper 0, 2, or 4), loads PRG/CHR and resets the CPU.
     pub fn from_ines(rom: &[u8]) -> Result<TestNes, String> {
         if rom.len() < 16 || &rom[0..4] != b"NES\x1A" {
             return Err("not an iNES file (missing NES\\x1A header)".into());
@@ -363,14 +497,17 @@ impl TestNes {
         let prg_banks = rom[4] as usize;
         let chr_banks = rom[5] as usize;
         let mapper = (rom[6] >> 4) | (rom[7] & 0xF0);
-        if mapper != 0 && mapper != 2 {
-            return Err(format!("unsupported mapper {mapper} (supported: 0 NROM, 2 UNROM)"));
+        if mapper != 0 && mapper != 2 && mapper != 4 {
+            return Err(format!("unsupported mapper {mapper} (supported: 0 NROM, 2 UNROM, 4 MMC3)"));
         }
         if mapper == 0 && prg_banks != 1 && prg_banks != 2 {
             return Err(format!("NROM requires 1 or 2 PRG banks, got {prg_banks}"));
         }
         if mapper == 2 && (prg_banks == 0 || prg_banks > 16) {
             return Err(format!("UNROM supports 1-16 PRG banks, got {prg_banks}"));
+        }
+        if mapper == 4 && (prg_banks == 0 || prg_banks > 128 || chr_banks == 0 || chr_banks > 128) {
+            return Err(format!("MMC3 requires 1-128 PRG and 1-128 CHR banks, got PRG={prg_banks} CHR={chr_banks}"));
         }
         let trainer = if rom[6] & 0x04 != 0 { 512 } else { 0 };
         let prg_start = 16 + trainer;
@@ -387,8 +524,19 @@ impl TestNes {
         let mut bus = NesBus::new(prg, chr);
         bus.mapper = mapper;
         bus.prg_banks = prg_banks;
+        bus.chr_banks = chr_banks;
         bus.horizontal = rom[6] & 0x01 == 0 && rom[6] & 0x08 == 0;
-        if !bus.chr.is_empty() {
+        if mapper == 4 {
+        if mapper == 4 {
+            // MMC3: initialize CHR bank registers to identity (0-5) and PRG to 0
+            for i in 0..6 {
+                bus.mmc3_bank_data[i] = i as u8;
+            }
+            bus.mmc3_bank_data[6] = 0; // PRG bank at $8000/$C000
+            bus.mmc3_bank_data[7] = 1; // PRG bank at $A000
+        }
+        }
+        if !bus.chr.is_empty() && mapper != 4 {
             let n = bus.chr.len().min(0x2000);
             bus.vram[..n].copy_from_slice(&bus.chr[..n]);
         }

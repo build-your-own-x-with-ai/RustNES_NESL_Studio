@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NESL Studio</title>
+<meta name="description" content="NESL Studio — write NESL in the browser, compile to a NES ROM and run it, all client-side.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2314161b'/%3E%3Crect x='6' y='9' width='20' height='14' rx='2' fill='%23e8483c'/%3E%3Crect x='9' y='12' width='14' height='8' fill='%2314161b'/%3E%3Crect x='12' y='15' width='8' height='2' fill='%23f2b134'/%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #14161b; --panel: #1c1f26; --line: #2a2e38; --text: #d8dbe2; --muted: #7d8494;
@@ -158,13 +160,37 @@
 </main>
 <div class="tip" id="tip" hidden></div>
 <script src="https://unpkg.com/jsnes@1.2.1/dist/jsnes.min.js"></script>
-<script src="/studio.js"></script>
+<!--NESC_WASM_LOADER-->
+<script src="studio.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
   const src = $("src"), hl = $("highlight"), gutter = $("gutter");
   const statusEl = $("status"), problems = $("problems"), asmPanel = $("asm");
   let errorLines = new Set(), romBytes = null, examples = [];
+
+  // ---------------------------------------------------------------- backend
+  // Two interchangeable backends that answer with byte-identical JSON: the
+  // in-browser wasm compiler (GitHub Pages) and the local `nesc serve` API.
+  const http = (path, body) =>
+    fetch(path, body === undefined ? undefined
+      : { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" }, body })
+      .then((r) => r.json());
+
+  let wasm = null;
+  // Resolved by the module loader below; times out to the HTTP backend when
+  // there is no `pkg/` next to the page (i.e. plain `nesc serve`).
+  const wasmReady = Promise.race([
+    new Promise((res) => { window.__nescReady = (h) => { wasm = h; res(h); }; }),
+    new Promise((res) => setTimeout(() => res(null), 10000)),
+  ]);
+
+  const call = {
+    compile: async (text) => { await wasmReady; return wasm ? JSON.parse(wasm.compile(text)) : http("/api/compile", text); },
+    check: async (text) => { await wasmReady; return wasm ? JSON.parse(wasm.check(text)) : http("/api/check", text); },
+    examples: async () => { await wasmReady; return wasm ? JSON.parse(wasm.examples()) : http("/api/examples"); },
+    builtins: async () => { await wasmReady; return wasm ? JSON.parse(wasm.builtins()) : http("/api/builtins"); },
+  };
 
   // ---------------------------------------------------------------- editor
   // fallbacks until /api/builtins (the compiler's own lists) arrives
@@ -311,8 +337,7 @@
     setStatus("编译中…");
     let res;
     try {
-      const r = await fetch("/api/compile", { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" }, body: src.value });
-      res = await r.json();
+      res = await call.compile(src.value);
     } catch (e) {
       setStatus("无法连接 nesc serve", "err");
       return;
@@ -365,7 +390,7 @@
     if (ex) { src.value = ex.source; errorLines.clear(); refresh(); compileAndRun(); }
   };
 
-  fetch("/api/examples").then((r) => r.json()).then((list) => {
+  call.examples().then((list) => {
     examples = list;
     for (const ex of list) {
       const o = document.createElement("option");
@@ -400,8 +425,7 @@
     const seq = ++checkSeq, text = src.value;
     let res;
     try {
-      const r = await fetch("/api/check", { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" }, body: text });
-      res = await r.json();
+      res = await call.check(text);
     } catch (e) {
       return; // server gone: keep the last result
     }
@@ -606,8 +630,7 @@
     if (chrSource === src.value) return;
     const text = src.value;
     try {
-      const r = await fetch("/api/compile", { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" }, body: text });
-      const res = await r.json();
+      const res = await call.compile(text);
       if (!res.ok) return;
       const bin = atob(res.rom), rom = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) rom[i] = bin.charCodeAt(i);
@@ -822,7 +845,7 @@
     }
   }
 
-  fetch("/api/builtins").then((r) => r.json()).then((b) => {
+  call.builtins().then((b) => {
     builtins = b;
     fnNames = new Set(b.functions.map((f) => f.name));
     kwNames = new Set(b.keywords);

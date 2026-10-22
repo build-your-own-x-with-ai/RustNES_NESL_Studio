@@ -47,6 +47,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let input = input.ok_or_else(|| format!("missing input file\n\n{USAGE}"))?;
             build(&input, output, asm, cmd == "check")
         }
+        #[cfg(not(target_arch = "wasm32"))]
         "serve" => {
             let mut port = 8080u16;
             let mut it = rest.iter();

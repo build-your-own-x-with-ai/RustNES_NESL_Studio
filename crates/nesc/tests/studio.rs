@@ -95,7 +95,8 @@ fn picking_a_palette_colour_changes_the_palette_data() {
 #[test]
 fn the_page_script_parses_and_its_element_ids_exist() {
     let html = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("web/index.html")).unwrap();
-    assert!(html.contains("<script src=\"/studio.js\"></script>"));
+    assert!(html.contains(r#"<script src="studio.js"></script>"#), "studio.js must load by relative path");
+    assert!(html.contains("<!--NESC_WASM_LOADER-->"), "the wasm loader hook must stay in place");
     let start = html.rfind("<script>").unwrap() + "<script>".len();
     let script = &html[start..html.rfind("</script>").unwrap()];
     for part in script.split("$(\"").skip(1) {

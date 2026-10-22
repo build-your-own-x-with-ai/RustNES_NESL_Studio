@@ -1,0 +1,17 @@
+{
+  "name": "nesc-wasm",
+  "type": "module",
+  "description": "NESL compiler as WebAssembly, for the browser editor",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "nesc_wasm_bg.wasm",
+    "nesc_wasm.js",
+    "nesc_wasm.d.ts"
+  ],
+  "main": "nesc_wasm.js",
+  "types": "nesc_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

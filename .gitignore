@@ -1,3 +1,5 @@
 /target
 *.nes
 .DS_Store
+# wasm-pack output; tools/build-pages.sh copies it into docs/pkg
+crates/nesc-wasm/pkg

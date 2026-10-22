@@ -1,4 +1,5 @@
 use super::*;
+use crate::json::{base64, json_str, EXAMPLES};
 use std::io::{Read, Write};
 
 fn req(method: &str, path: &str, body: &str) -> Request {

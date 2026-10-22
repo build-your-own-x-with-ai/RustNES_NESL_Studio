@@ -4,18 +4,9 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
-pub const MAX_BODY: usize = 1 << 20;
+use crate::json::{builtins_json, check_json, compile_json, examples_json};
 
-pub const EXAMPLES: &[(&str, &str)] = &[
-    ("hello", include_str!("../../../examples/hello.nesl")),
-    ("sprite", include_str!("../../../examples/sprite.nesl")),
-    ("game", include_str!("../../../examples/game.nesl")),
-    ("shooter", include_str!("../../../examples/shooter.nesl")),
-    ("maze", include_str!("../../../examples/maze.nesl")),
-    ("runner", include_str!("../../../examples/runner.nesl")),
-    ("quest", include_str!("../../../examples/quest.nesl")),
-    ("split", include_str!("../../../examples/split.nesl")),
-];
+pub const MAX_BODY: usize = 1 << 20;
 
 #[derive(Debug)]
 pub struct Request {
@@ -83,64 +74,15 @@ pub fn handle(req: &Request) -> Response {
         ("GET", "/") | ("GET", "/index.html") => {
             Response { status: 200, content_type: "text/html; charset=utf-8", body: INDEX_HTML.as_bytes().to_vec() }
         }
-        ("GET", "/api/examples") => {
-            let items: Vec<String> = EXAMPLES
-                .iter()
-                .map(|(name, src)| format!("{{\"name\":{},\"source\":{}}}", json_str(name), json_str(src)))
-                .collect();
-            json(format!("[{}]", items.join(",")))
-        }
-        ("POST", "/api/compile") => {
-            let src = String::from_utf8_lossy(&req.body);
-            json(match nesl::compile(&src) {
-                Ok(out) => format!(
-                    "{{\"ok\":true,\"rom\":{},\"prg_used\":{},\"asm\":{}}}",
-                    json_str(&base64(&out.rom)),
-                    out.prg_used,
-                    json_str(&out.listing)
-                ),
-                Err(errs) => format!("{{\"ok\":false,\"errors\":{}}}", diagnostics(&errs)),
-            })
-        }
-        ("POST", "/api/check") => {
-            let src = String::from_utf8_lossy(&req.body);
-            json(match nesl::compile(&src) {
-                Ok(_) => "{\"ok\":true,\"errors\":[]}".to_string(),
-                Err(errs) => format!("{{\"ok\":false,\"errors\":{}}}", diagnostics(&errs)),
-            })
-        }
+        ("GET", "/api/examples") => json(examples_json()),
+        ("POST", "/api/compile") => json(compile_json(&String::from_utf8_lossy(&req.body))),
+        ("POST", "/api/check") => json(check_json(&String::from_utf8_lossy(&req.body))),
         ("GET", "/studio.js") => {
             Response { status: 200, content_type: "text/javascript; charset=utf-8", body: STUDIO_JS.as_bytes().to_vec() }
         }
         ("GET", "/api/builtins") => json(builtins_json()),
         _ => Response { status: 404, content_type: "text/plain; charset=utf-8", body: b"not found".to_vec() },
     }
-}
-
-fn diagnostics(errs: &[nesl::Diagnostic]) -> String {
-    let items: Vec<String> = errs
-        .iter()
-        .map(|d| format!("{{\"line\":{},\"col\":{},\"message\":{}}}", d.line, d.col, json_str(&d.message)))
-        .collect();
-    format!("[{}]", items.join(","))
-}
-
-/// Everything the editor needs for completion and hover, straight from the compiler.
-fn builtins_json() -> String {
-    let functions: Vec<String> = nesl::builtins::DOCS
-        .iter()
-        .map(|(n, sig, doc)| format!("{{\"name\":{},\"sig\":{},\"doc\":{}}}", json_str(n), json_str(sig), json_str(doc)))
-        .collect();
-    let constants: Vec<String> = nesl::builtins::CONSTANTS.iter().map(|(n, _)| json_str(n)).collect();
-    // reserved keywords, contextual declarations and type names
-    let extra = ["map", "metasprite", "palette_zone", "music", "sound", "true", "false", "u8", "i8", "u16"];
-    let keywords: Vec<String> = nesl::lexer::KEYWORDS.iter().chain(extra.iter()).map(|k| json_str(k)).collect();
-    format!(
-        "{{\"functions\":[{}],\"constants\":[{}],\"keywords\":[{}]}}",
-        functions.join(","),
-        constants.join(","),
-        keywords.join(",")
-    )
 }
 
 fn reason(status: u16) -> &'static str {
@@ -173,42 +115,6 @@ pub fn handle_connection(mut stream: TcpStream) {
         Err(e) => Response { status: e.status, content_type: "text/plain; charset=utf-8", body: e.message.into_bytes() },
     };
     let _ = write_response(&mut stream, &response);
-}
-
-/// JSON string literal with escaping.
-pub fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
-pub fn base64(data: &[u8]) -> String {
-    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
-        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(ABC[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
 }
 
 /// Serves the editor on 127.0.0.1:`port` until the process is stopped.

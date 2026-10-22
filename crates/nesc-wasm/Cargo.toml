@@ -1,0 +1,17 @@
+[package]
+name = "nesc-wasm"
+description = "NESL compiler as WebAssembly, for the browser editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nesl = { path = "../nesl" }
+nesc = { path = "../nesc" }
+wasm-bindgen = "0.2"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz"]

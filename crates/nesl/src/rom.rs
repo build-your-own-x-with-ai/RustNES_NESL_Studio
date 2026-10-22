@@ -75,6 +75,53 @@ pub fn build_ines(code: &[u8], nmi: u16, reset: u16, irq: u16, chr: &[u8]) -> Re
     Ok(rom)
 }
 
+/// Start of the MMC3 reset stub in the fixed bank; program code must end before it.
+pub const MMC3_STUB: u16 = 0xFFD0;
+
+/// Builds an MMC3 (mapper 4) image with 32KB PRG mapped linearly ($8000-$FFFF) and the
+/// 8KB `chr` (tiles in $0000-$0FFF) copied into both pattern tables. A stub at
+/// `MMC3_STUB` sets the bank registers (undefined at power-on) before jumping to `reset`.
+pub fn build_mmc3(code: &[u8], nmi: u16, reset: u16, irq: u16, chr: &[u8]) -> Result<Vec<u8>, String> {
+    let limit = (MMC3_STUB - 0x8000) as usize;
+    if code.len() > limit {
+        return Err(format!("program is too large for MMC3 (32KB): {} bytes of code/data, limit is {limit}", code.len()));
+    }
+    // flags6: mapper 4 low nibble, battery, vertical mirroring
+    let mut rom = vec![b'N', b'E', b'S', 0x1A, 2, 1, 0x43, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    rom.extend_from_slice(code);
+    rom.resize(HEADER_SIZE + PRG_SIZE, 0xFF);
+    #[rustfmt::skip]
+    let mut stub = vec![
+        0x78,                     // SEI
+        0xA2, 0x07,               // LDX #7
+        0x8E, 0x00, 0x80,         // loop: STX $8000  select R[X]
+        0xBD, 0, 0,               // LDA table,X
+        0x8D, 0x01, 0x80,         // STA $8001
+        0xCA,                     // DEX
+        0x10, 0xF4,               // BPL loop
+        0xA9, 0x00, 0x8D, 0x00, 0xA0, // vertical mirroring
+        0xA9, 0x80, 0x8D, 0x01, 0xA0, // PRG-RAM enabled
+        0x4C, reset as u8, (reset >> 8) as u8,
+    ];
+    let table = MMC3_STUB + stub.len() as u16;
+    stub[7] = table as u8;
+    stub[8] = (table >> 8) as u8;
+    // R0/R1: 2KB CHR at $0000/$0800; R2-R5: 1KB at $1000-$1C00; R6/R7: PRG 0/1
+    stub.extend_from_slice(&[0, 2, 4, 5, 6, 7, 0, 1]);
+    let at = HEADER_SIZE + (MMC3_STUB - 0x8000) as usize;
+    rom[at..at + stub.len()].copy_from_slice(&stub);
+    let v = HEADER_SIZE + PRG_SIZE - 6;
+    for (i, a) in [nmi, MMC3_STUB, irq].iter().enumerate() {
+        rom[v + 2 * i..v + 2 * i + 2].copy_from_slice(&a.to_le_bytes());
+    }
+    if chr.len() != CHR_SIZE {
+        return Err(format!("CHR data must be {CHR_SIZE} bytes, got {}", chr.len()));
+    }
+    rom.extend_from_slice(&chr[..0x1000]);
+    rom.extend_from_slice(&chr[..0x1000]);
+    Ok(rom)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

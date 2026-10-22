@@ -41,6 +41,8 @@ pub const SEL_ID: u16 = 0x0361;
 pub const SEL_W: u16 = 0x0362;
 /// Map's bank number for dynamic map list selection (banked mode only).
 pub const SEL_BANK: u16 = 0x037E;
+/// MMC3: scanline for `fn irq()` (0 = off), re-armed by NMI every frame.
+pub const IRQ_LINE: u16 = 0x037F;
 /// Non-zero while the main program is appending to the queue; NMI then skips the flush.
 pub const VQ_LOCK: u16 = 0x0363;
 // Sound effect state, advanced once per frame by the NMI.
@@ -195,11 +197,17 @@ pub fn emit_banked(e: &mut Emitter) {
     e.imp(RTS);
 }
 
-pub fn emit_core(e: &mut Emitter, banked: bool) {
+/// Zero-page scratch that `fn irq()` may clobber and must give back to the interrupted code.
+const IRQ_SAVED: [std::ops::Range<u16>; 2] = [TMP0..PTR2 + 2, TMP4..ARG4 + 1];
+
+pub fn emit_core(e: &mut Emitter, banked: bool, mmc3: bool) {
     e.comment("---- runtime: reset ----");
     e.label("__reset");
     e.imp(SEI);
     e.imp(CLD);
+    if mmc3 {
+        e.abs(STA, 0xE000); // MMC3 IRQ off until scanline_irq()
+    }
     e.imm(LDX, 0x40);
     e.abs(STX, 0x4017); // disable APU frame IRQ
     e.imm(LDX, 0xFF);
@@ -229,12 +237,17 @@ pub fn emit_core(e: &mut Emitter, banked: bool) {
     e.br(BPL, "__vb2");
     e.imm(LDA, 0xA5);
     e.abs(STA, RNG);
-    e.imm(LDA, 0x80); // NMI on, both pattern tables at $0000
+    // NMI on; NROM/UNROM draw everything from $0000. MMC3 fetches sprites from $1000 (a copy)
+    // so PPU A12 rises once per line and clocks the scanline counter.
+    e.imm(LDA, if mmc3 { 0x88 } else { 0x80 });
     e.abs(STA, CTRL_SHADOW);
     e.abs(STA, LAST_CTRL);
     e.abs(STA, PPUCTRL);
     if banked { e.jsr("__chr_copy"); }
     e.jsr("__init_globals");
+    if mmc3 {
+        e.imp(CLI);
+    }
     e.jsr("f_main");
     e.label("__halt");
     e.jmp("__halt");
@@ -290,6 +303,22 @@ pub fn emit_core(e: &mut Emitter, banked: bool) {
     e.abs(LDA, SCROLL_Y);
     e.abs(STA, PPUSCROLL);
     e.label("__nmi_skip");
+    if mmc3 {
+        // Re-arm for this frame: the pre-render line reloads the counter, so the IRQ comes
+        // (latch + 1) lines later; latch = line - 2 leaves irq() time to act by `line`.
+        e.abs(STA, 0xE000);
+        e.abs(LDA, IRQ_LINE);
+        e.br(BEQ, "__nmi_irq_off");
+        e.imp(SEC);
+        e.imm(SBC, 2);
+        e.br(BCS, "__nmi_latch");
+        e.imm(LDA, 0);
+        e.label("__nmi_latch");
+        e.abs(STA, 0xC000);
+        e.abs(STA, 0xC001);
+        e.abs(STA, 0xE001);
+        e.label("__nmi_irq_off");
+    }
     e.jsr("__sfx_tick");
     e.jsr("__music_tick");
     e.abs(LDA, MASK_SHADOW);
@@ -305,7 +334,32 @@ pub fn emit_core(e: &mut Emitter, banked: bool) {
     e.imp(PLA);
     e.imp(TAX);
     e.imp(PLA);
+    e.imp(RTI);
+
+    e.comment("---- runtime: IRQ ----");
     e.label("__irq");
+    if mmc3 {
+        e.imp(PHA);
+        e.imp(TXA);
+        e.imp(PHA);
+        e.imp(TYA);
+        e.imp(PHA);
+        for a in IRQ_SAVED.iter().flat_map(|r| r.clone()) {
+            e.abs(LDA, a);
+            e.imp(PHA);
+        }
+        e.abs(STA, 0xE000); // acknowledge; NMI re-arms for the next frame
+        e.jsr("f_irq");
+        for a in IRQ_SAVED.iter().flat_map(|r| r.clone()).rev() {
+            e.imp(PLA);
+            e.abs(STA, a);
+        }
+        e.imp(PLA);
+        e.imp(TAY);
+        e.imp(PLA);
+        e.imp(TAX);
+        e.imp(PLA);
+    }
     e.imp(RTI);
 }
 
@@ -370,7 +424,7 @@ mod layout_tests {
             ("RNG", RNG, 1), ("TMP4", TMP4, 1), ("TMP5", TMP5, 1), ("ARG0", ARG0, 1), ("ARG1", ARG1, 1),
             ("ARG2", ARG2, 1), ("ARG3", ARG3, 1), ("ARG4", ARG4, 1), ("VQ_LEN", VQ_LEN, 1),
             ("NMI_PTR", NMI_PTR, 2), ("VQ", VQ, VQ_SIZE as u16), ("PRINT_BUF", PRINT_BUF, 5),
-            ("SMT_W", SMT_W, 1), ("SEL_ID", SEL_ID, 1), ("SEL_W", SEL_W, 1), ("SEL_BANK", SEL_BANK, 1),
+            ("SMT_W", SMT_W, 1), ("SEL_ID", SEL_ID, 1), ("SEL_W", SEL_W, 1), ("SEL_BANK", SEL_BANK, 1), ("IRQ_LINE", IRQ_LINE, 1),
             ("VQ_LOCK", VQ_LOCK, 1), ("SFX_TIMER", SFX_TIMER, 1), ("SFX_CH", SFX_CH, 1),
             ("SFX_PLO", SFX_PLO, 1), ("SFX_DELTA", SFX_DELTA, 1), ("SFX_MAXVOL", SFX_MAXVOL, 1),
             ("SFX_DUTY", SFX_DUTY, 1), ("APU_EN", APU_EN, 1), ("CAM_X", CAM_X, 2), ("CAM_COL", CAM_COL, 1),

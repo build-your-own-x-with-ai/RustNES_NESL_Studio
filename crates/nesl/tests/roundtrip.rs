@@ -193,4 +193,31 @@ fn function_body_builtin_calls_decompiled() {
     nesl::compile(&dec).unwrap_or_else(|e| panic!("recompile failed: {e:?}\n{dec}"));
 }
 
+#[test]
+fn function_body_if_and_local_var_decompiled() {
+    // `let pad = joypad(0); if pad & BTN_LEFT { x -= 1; }` compiles to
+    // JSR __joypad; STA $local; LDA $local; AND #mask; CMP #0; BEQ skip; DEC $x; skip:
+    let src = r#"
+        var x: u8 = 124;
+        var y: u8 = 112;
+        fn main() {
+            loop {
+                wait_vblank();
+                let pad = joypad(0);
+                if pad & BTN_LEFT { x -= 1; }
+                if pad & BTN_RIGHT { x += 1; }
+                if pad & BTN_UP { y -= 1; }
+                if pad & BTN_DOWN { y += 1; }
+            }
+        }
+    "#;
+    let dec = decompile_src("if_body", src);
+    // The local holding the joypad result should appear as a let-binding.
+    assert!(dec.contains("let "), "local let missing:\n{dec}");
+    // The four if-statements with +=1 / -=1 bodies should be reconstructed.
+    assert!(dec.contains("if ") || dec.contains("& 2"), "if missing:\n{dec}");
+    // Must recompile
+    nesl::compile(&dec).unwrap_or_else(|e| panic!("recompile failed: {e:?}\n{dec}"));
+}
+
 

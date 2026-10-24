@@ -227,6 +227,13 @@ fn decompile_function(
     // For load_palette: ARG2 holds the length, but we resolve by const name via the data table.
     // Track the last data pointer address seen (set by `pointer(&label)` which writes to $04/$05).
     let mut data_ptr_addr: Option<u16> = None;
+    // Local variables created inside this function: zero-page address → (name, type).
+    // Populated when a value-returning builtin (joypad, frame_count, rand, …) is followed
+    // by a STA instruction — that STA stores the return value into a compiler-allocated local.
+    let mut locals: std::collections::BTreeMap<u16, (String, &str)> = std::collections::BTreeMap::new();
+    let mut local_counter = 0u32;
+    // Address of the most recent value-returning JSR's result (in A at that point).
+    let mut pending_return: Option<(String, Vec<Expr>)> = None; // (func_name, args)
 
     let start_pc = func_offset;
     let mut pc = func_offset;
@@ -247,18 +254,26 @@ fn decompile_function(
 
         let stmts = if in_loop { &mut loop_body } else { &mut body };
 
-        match &instr {
-            // STA into ARG0-ARG4 ($10-$14): the concrete value was already captured by the
-            // LDA #imm lookahead below, so nothing extra to do here.
-            // STA $04/$05 (PTR): the data_ptr_addr was set by the 4-instruction lookahead on
-            // the first LDA of that sequence — do NOT reset it here.
-            Instruction::STA(AddressingMode::ZeroPage, _) |
-            Instruction::STA(AddressingMode::Absolute, _) => {
-                pc += size;
-                continue;
+        // STA into ARG0-ARG4 or PTR ($04/$05): the concrete value or data_ptr_addr was
+        // already captured by the lookahead windows on the preceding LDA instruction.
+        // Exception: if there is a pending_return (result of a value-returning builtin),
+        // a STA anywhere outside $04/$05 stores that return value into a local.
+        if let Instruction::STA(AddressingMode::ZeroPage, dest) |
+               Instruction::STA(AddressingMode::Absolute, dest) = &instr {
+            let dest = *dest;
+            if let Some((fname, fargs)) = pending_return.take() {
+                // Value-returning call result stored into a local slot.
+                let vname = format!("_local{local_counter}");
+                local_counter += 1;
+                locals.insert(dest, (vname.clone(), "u8"));
+                stmts.push(Stmt::VarDecl {
+                    name: vname,
+                    ty: Some(Type::U8),
+                    init: Some(Expr::Call { func: fname, args: fargs }),
+                });
             }
-            // Track LDA #imm followed by STA slot — handled as a two-instruction window.
-            _ => {}
+            pc += size;
+            continue;
         }
 
         // Two-instruction window: LDA #n ; STA $1x
@@ -278,7 +293,7 @@ fn decompile_function(
 
         // Two-instruction window: LDA $addr ; STA $1x
         // Loading a variable's value into an argument slot. Resolve the zero-page or
-        // absolute address back to the variable's name via the symbol table.
+        // absolute address back to the variable's name (global or local) via the symbol table.
         if let Instruction::LDA(mode, src_addr) = &instr {
             if matches!(mode, AddressingMode::ZeroPage | AddressingMode::Absolute) {
                 let next_off = pc + size;
@@ -286,7 +301,9 @@ fn decompile_function(
                     dis.decode_at(next_off)
                 {
                     if (0x10..=0x14).contains(&slot_addr) {
-                        if let Some(var_name) = find_var_by_addr(*src_addr, table) {
+                        let resolved = find_var_by_addr(*src_addr, table)
+                            .or_else(|| locals.get(src_addr).map(|(n, _)| n.clone()));
+                        if let Some(var_name) = resolved {
                             let slot = (slot_addr - 0x10) as usize;
                             arg_slots[slot] = Some(Expr::Var(var_name));
                         }
@@ -318,6 +335,64 @@ fn decompile_function(
             }
         }
 
+        // Pattern: LDA local ; AND #mask ; CMP #0 ; BEQ +2 ; DEC/INC addr
+        // This is the compiled form of `if var & MASK { target += 1 / -= 1 }`
+        let lda_zp_or_abs = match &instr {
+            Instruction::LDA(AddressingMode::ZeroPage, a) |
+            Instruction::LDA(AddressingMode::Absolute, a) => Some(*a),
+            _ => None,
+        };
+        if let Some(load_addr) = lda_zp_or_abs {
+            let o1 = pc + size;
+            if let Some((Instruction::AND(AddressingMode::Immediate, mask), s1)) = dis.decode_at(o1) {
+                let o2 = o1 + s1;
+                if let Some((Instruction::CMP(AddressingMode::Immediate, 0), s2)) = dis.decode_at(o2) {
+                    let o3 = o2 + s2;
+                    if let Some((Instruction::BEQ(2), s3)) = dis.decode_at(o3) {
+                        let o4 = o3 + s3;
+                        let body_info = match dis.decode_at(o4) {
+                            Some((Instruction::DEC(AddressingMode::ZeroPage, a), sz)) => Some((false, a, sz)),
+                            Some((Instruction::INC(AddressingMode::ZeroPage, a), sz)) => Some((true, a, sz)),
+                            Some((Instruction::DEC(AddressingMode::Absolute, a), sz)) => Some((false, a, sz)),
+                            Some((Instruction::INC(AddressingMode::Absolute, a), sz)) => Some((true, a, sz)),
+                            _ => None,
+                        };
+                        if let Some((inc_dec, target_addr, body_size)) = body_info {
+                            // Resolve condition var from globals or locals
+                            let cond_var_opt = find_var_by_addr(load_addr, table)
+                                .or_else(|| locals.get(&load_addr).map(|(n, _)| n.clone()));
+                            if let (Some(cond_var), Some(body_var)) = (
+                                cond_var_opt,
+                                find_var_by_addr(target_addr, table)
+                                    .or_else(|| locals.get(&target_addr).map(|(n, _)| n.clone())),
+                            ) {
+                                let cond = Expr::BinOp {
+                                    op: "&".to_string(),
+                                    left: Box::new(Expr::Var(cond_var)),
+                                    right: Box::new(Expr::Literal(Value::U8(mask as u8))),
+                                };
+                                let body_stmt = Stmt::Assign {
+                                    target: body_var.clone(),
+                                    value: Expr::BinOp {
+                                        op: if inc_dec { "+" } else { "-" }.to_string(),
+                                        left: Box::new(Expr::Var(body_var)),
+                                        right: Box::new(Expr::Literal(Value::U8(1))),
+                                    },
+                                };
+                                stmts.push(Stmt::If {
+                                    cond,
+                                    then_block: vec![body_stmt],
+                                    else_block: None,
+                                });
+                                pc = o4 + body_size;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         match &instr {
             Instruction::JSR(target_addr) => {
                 let target = *target_addr;
@@ -325,14 +400,24 @@ fn decompile_function(
 
                 if let Some(name) = name_opt {
                     let args = reconstruct_args(&name, &arg_slots, data_ptr_addr, table, cpu_base, &rom.prg_rom);
-                    stmts.push(Stmt::Call { func: name, args });
-                    // Reset tracking after JSR
+                    // Check if this builtin returns a value (joypad, frame_count, rand, etc.)
+                    let returns_value = crate::builtins::signature(&name)
+                        .and_then(|s| s.ret)
+                        .is_some();
+                    if returns_value {
+                        // Don't emit yet — wait for the STA that stores the return value.
+                        pending_return = Some((name, args));
+                    } else {
+                        stmts.push(Stmt::Call { func: name, args });
+                        pending_return = None;
+                    }
                     arg_slots = Default::default();
                     data_ptr_addr = None;
                 } else if let Some(fname) = find_function_by_addr(target, table) {
                     stmts.push(Stmt::Call { func: fname, args: vec![] });
                     arg_slots = Default::default();
                     data_ptr_addr = None;
+                    pending_return = None;
                 }
                 pc += size;
             }

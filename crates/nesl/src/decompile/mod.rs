@@ -85,10 +85,11 @@ impl From<io::Error> for DecompileError {
 }
 
 /// Parses a JSON symbol table string into a SymbolTable struct.
-pub fn parse_symbols(_json: &str) -> Result<crate::debug_symbols::SymbolTable, DecompileError> {
-    // Placeholder - will be implemented in Phase 2
-    Err(DecompileError::InvalidSymbols {
-        reason: "Not implemented yet".into(),
+pub fn parse_symbols(json: &str) -> Result<crate::debug_symbols::SymbolTable, DecompileError> {
+    serde_json::from_str(json).map_err(|e| {
+        DecompileError::InvalidSymbols {
+            reason: format!("JSON 解析失败: {}", e),
+        }
     })
 }
 

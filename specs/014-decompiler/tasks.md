@@ -41,36 +41,36 @@
 
 ### Data Structures (from data-model.md)
 
-- [ ] T009 [P] Define `SymbolTable` struct in `crates/nesl/src/debug_symbols.rs` with fields: version (String), compiler_version (String), mapper (u8), prg_size (usize), chr_size (usize), variables (Vec<Variable>), constants (Vec<Constant>), functions (Vec<Function>), resources (Vec<Resource>), builtins (Vec<Builtin>), source_map (Vec<SourceMapEntry>)
-- [ ] T010 [P] Define `Variable` struct with fields: name (String), ty (Type), addr (u16), init_value (Option<Value>) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T011 [P] Define `Type` enum (U8, U16, I8, Array, Struct) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T012 [P] Define `Constant` struct with fields: name (String), ty (Type), addr (u16), data (Vec<u8>) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T013 [P] Define `Function` struct with fields: name (String), addr (u16), params (Vec<(String, Type)>), return_ty (Option<Type>), local_vars (Vec<Variable>) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T014 [P] Define `Resource` struct with fields: name (String), resource_ty (ResourceType), location (ResourceLocation) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T015 [P] Define `ResourceType` enum (Tile, Map, Music, Metasprite, Sound) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T016 [P] Define `ResourceLocation` enum (ChrRom, PrgRom, Bank) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T017 [P] Define `Builtin` struct with fields: name (String), addr (u16), signature (String) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T018 [P] Define `SourceMapEntry` struct with fields: nes_addr (u16), source_line (usize), source_file (String) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T019 [P] Define `Value` enum (U8, U16, I8, Array) in `crates/nesl/src/debug_symbols.rs`
-- [ ] T020 Add `#[derive(Serialize, Deserialize)]` to all data structures in `crates/nesl/src/debug_symbols.rs`
+- [X] T009 [P] Define `SymbolTable` struct in `crates/nesl/src/debug_symbols.rs` with fields: version (String), compiler_version (String), mapper (u8), prg_size (usize), chr_size (usize), variables (Vec<Variable>), constants (Vec<Constant>), functions (Vec<Function>), resources (Vec<Resource>), builtins (Vec<Builtin>), source_map (Vec<SourceMapEntry>)
+- [X] T010 [P] Define `Variable` struct with fields: name (String), ty (Type), addr (u16), init_value (Option<Value>) in `crates/nesl/src/debug_symbols.rs`
+- [X] T011 [P] Define `Type` enum (U8, U16, I8, Array, Struct) in `crates/nesl/src/debug_symbols.rs`
+- [X] T012 [P] Define `Constant` struct with fields: name (String), ty (Type), addr (u16), data (Vec<u8>) in `crates/nesl/src/debug_symbols.rs`
+- [X] T013 [P] Define `Function` struct with fields: name (String), addr (u16), params (Vec<(String, Type)>), return_ty (Option<Type>), local_vars (Vec<Variable>) in `crates/nesl/src/debug_symbols.rs`
+- [X] T014 [P] Define `Resource` struct with fields: name (String), resource_ty (ResourceType), location (ResourceLocation) in `crates/nesl/src/debug_symbols.rs`
+- [X] T015 [P] Define `ResourceType` enum (Tile, Map, Music, Metasprite, Sound) in `crates/nesl/src/debug_symbols.rs`
+- [X] T016 [P] Define `ResourceLocation` enum (ChrRom, PrgRom, Bank) in `crates/nesl/src/debug_symbols.rs`
+- [X] T017 [P] Define `Builtin` struct with fields: name (String), addr (u16), signature (String) in `crates/nesl/src/debug_symbols.rs`
+- [X] T018 [P] Define `SourceMapEntry` struct with fields: nes_addr (u16), source_line (usize), source_file (String) in `crates/nesl/src/debug_symbols.rs`
+- [X] T019 [P] Define `Value` enum (U8, U16, I8, Array) in `crates/nesl/src/debug_symbols.rs`
+- [X] T020 Add `#[derive(Serialize, Deserialize)]` to all data structures in `crates/nesl/src/debug_symbols.rs`
 
 ### Symbol Table Generation (contracts/symbol-table.md)
 
-- [ ] T021 Implement `generate_symbols(out: &CompileOutput) -> SymbolTable` in `crates/nesl/src/debug_symbols.rs` returning stub SymbolTable with version "1.0.0"
-- [ ] T022 Add `--debug-symbols` flag to `crates/nesc/src/cmd/build.rs` that calls `generate_symbols()` and writes `.syms` JSON file
-- [ ] T023 Implement `parse_symbols(json: &str) -> Result<SymbolTable, DecompileError>` in `crates/nesl/src/decompile/mod.rs` using `serde_json::from_str`
+- [X] T021 Implement `generate_symbols(out: &CompileOutput) -> SymbolTable` in `crates/nesl/src/debug_symbols.rs` returning stub SymbolTable with version "1.0.0"
+- [X] T022 Add `--debug-symbols` flag to `crates/nesc/src/cmd/build.rs` that calls `generate_symbols()` and writes `.syms` JSON file
+- [X] T023 Implement `parse_symbols(json: &str) -> Result<SymbolTable, DecompileError>` in `crates/nesl/src/decompile/mod.rs` using `serde_json::from_str`
 
 ### Error Types (data-model.md)
 
-- [ ] T024 [P] Define `DecompileError` enum in `crates/nesl/src/decompile/mod.rs` with variants: RomNotFound { path: String }, SymbolsNotFound { path: String }, InvalidRom { reason: String }, InvalidSymbols { reason: String }, UnsupportedVersion { found: String, supported: String }, UnsupportedMapper { mapper: u8 }, SymbolMismatch { reason: String }, NotNeslRom, UnrecognizedPattern { addr: u16, desc: String }, Io(std::io::Error)
-- [ ] T025 Implement `Display` for `DecompileError` in `crates/nesl/src/decompile/mod.rs` with clear, actionable error messages per contracts/decompile-api.md
-- [ ] T026 Implement `Error` for `DecompileError` in `crates/nesl/src/decompile/mod.rs`
-- [ ] T027 Implement `From<std::io::Error>` for `DecompileError` in `crates/nesl/src/decompile/mod.rs`
+- [X] T024 [P] Define `DecompileError` enum in `crates/nesl/src/decompile/mod.rs` with variants: RomNotFound { path: String }, SymbolsNotFound { path: String }, InvalidRom { reason: String }, InvalidSymbols { reason: String }, UnsupportedVersion { found: String, supported: String }, UnsupportedMapper { mapper: u8 }, SymbolMismatch { reason: String }, NotNeslRom, UnrecognizedPattern { addr: u16, desc: String }, Io(std::io::Error)
+- [X] T025 Implement `Display` for `DecompileError` in `crates/nesl/src/decompile/mod.rs` with clear, actionable error messages per contracts/decompile-api.md
+- [X] T026 Implement `Error` for `DecompileError` in `crates/nesl/src/decompile/mod.rs`
+- [X] T027 Implement `From<std::io::Error>` for `DecompileError` in `crates/nesl/src/decompile/mod.rs`
 
 ### ROM Parser
 
-- [ ] T028 Create `crates/nesl/src/decompile/rom_parser.rs` with `RomImage` struct containing header (InesHeader), prg_rom (Vec<u8>), chr_rom (Vec<u8>)
-- [ ] T029 Implement `load_rom(path: &Path) -> Result<RomImage, DecompileError>` in `crates/nesl/src/decompile/rom_parser.rs` that validates iNES header (NES\x1A magic), extracts mapper, prg_size, chr_size
+- [X] T028 Create `crates/nesl/src/decompile/rom_parser.rs` with `RomImage` struct containing header (InesHeader), prg_rom (Vec<u8>), chr_rom (Vec<u8>)
+- [X] T029 Implement `load_rom(path: &Path) -> Result<RomImage, DecompileError>` in `crates/nesl/src/decompile/rom_parser.rs` that validates iNES header (NES\x1A magic), extracts mapper, prg_size, chr_size
 
 **Checkpoint**: Foundation ready — 用户故事实现可以并行开始
 

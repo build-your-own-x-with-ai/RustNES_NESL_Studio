@@ -108,19 +108,78 @@ pub struct SymbolTable {
 }
 
 /// Generates a debug symbol table from compiler output.
-pub fn generate_symbols(_out: &crate::CompileOutput) -> SymbolTable {
-    // Stub implementation - will be filled in Phase 2
+pub fn generate_symbols(out: &crate::CompileOutput) -> SymbolTable {
+    let mut variables = Vec::new();
+    let mut functions = Vec::new();
+    let mut constants = Vec::new();
+
+    // Extract variables from CompileOutput.vars
+    for (name, info) in &out.vars {
+        let ty = match info.size {
+            1 => Type::U8,
+            2 => Type::U16,
+            _ => Type::Array {
+                element_ty: Box::new(Type::U8),
+                length: info.size as usize
+            },
+        };
+        variables.push(Variable {
+            name: name.clone(),
+            ty,
+            addr: info.addr,
+            init_value: None, // Will be filled from disassembly in later phases
+        });
+    }
+
+    // Extract functions and constants from CompileOutput.symbols
+    for (name, addr) in &out.symbols {
+        if let Some(func_name) = name.strip_prefix("f_") {
+            functions.push(Function {
+                name: func_name.to_string(),
+                addr: *addr,
+                params: Vec::new(), // TODO: extract from AST in later phases
+                return_ty: None,
+                local_vars: Vec::new(),
+            });
+        } else if let Some(const_name) = name.strip_prefix("d_") {
+            // Data label - extract as constant
+            constants.push(Constant {
+                name: const_name.to_string(),
+                ty: Type::Array {
+                    element_ty: Box::new(Type::U8),
+                    length: 0 // Unknown length for now
+                },
+                addr: *addr,
+                data: Vec::new(), // Will be filled from ROM in later phases
+            });
+        }
+    }
+
+    // Calculate actual ROM sizes from the ROM structure
+    // iNES format: 16-byte header + PRG-ROM + CHR-ROM
+    let total_size = out.rom.len();
+    let chr_size = if total_size >= 16 + 8192 {
+        8192 // Standard CHR-ROM size for NROM
+    } else {
+        0
+    };
+    let prg_size = if total_size > 16 + chr_size {
+        total_size - 16 - chr_size
+    } else {
+        0
+    };
+
     SymbolTable {
         version: "1.0.0".into(),
         compiler_version: env!("CARGO_PKG_VERSION").into(),
-        mapper: 0,
-        prg_size: 0,
-        chr_size: 0,
-        variables: Vec::new(),
-        constants: Vec::new(),
-        functions: Vec::new(),
-        resources: Vec::new(),
-        builtins: Vec::new(),
-        source_map: Vec::new(),
+        mapper: out.mapper,
+        prg_size,
+        chr_size,
+        variables,
+        constants,
+        functions,
+        resources: Vec::new(), // Will be populated in US2
+        builtins: Vec::new(),  // Will be populated in US1
+        source_map: Vec::new(), // Optional for now
     }
 }

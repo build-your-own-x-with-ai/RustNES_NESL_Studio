@@ -1,8 +1,5 @@
 //! Round-trip tests: compile → decompile → recompile, verify semantic equivalence.
 
-mod common;
-use common::*;
-
 /// Helper: compiles source, decompiles, recompiles, checks both ROMs have same behavior.
 fn roundtrip(name: &str, src: &str) {
     // Phase 1: Compile original

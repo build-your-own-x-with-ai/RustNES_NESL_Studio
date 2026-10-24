@@ -276,6 +276,25 @@ fn decompile_function(
             }
         }
 
+        // Two-instruction window: LDA $addr ; STA $1x
+        // Loading a variable's value into an argument slot. Resolve the zero-page or
+        // absolute address back to the variable's name via the symbol table.
+        if let Instruction::LDA(mode, src_addr) = &instr {
+            if matches!(mode, AddressingMode::ZeroPage | AddressingMode::Absolute) {
+                let next_off = pc + size;
+                if let Some((Instruction::STA(AddressingMode::ZeroPage, slot_addr), _)) =
+                    dis.decode_at(next_off)
+                {
+                    if (0x10..=0x14).contains(&slot_addr) {
+                        if let Some(var_name) = find_var_by_addr(*src_addr, table) {
+                            let slot = (slot_addr - 0x10) as usize;
+                            arg_slots[slot] = Some(Expr::Var(var_name));
+                        }
+                    }
+                }
+            }
+        }
+
         // Four-instruction lookahead: LDA #lo ; STA $04 ; LDA #hi ; STA $05
         // This is the `pointer(&label)` sequence the emitter emits for Data/Text args.
         // Capture the reconstructed address so we can match it to a const table entry.
@@ -359,34 +378,34 @@ fn reconstruct_args(
     use crate::builtins::Param;
 
     let Some(sig) = signature(name) else { return vec![] };
+    // The ARG address ($10-$14) each parameter is stored at. None = pointer-based
+    // (Data/Text via PTR $04/$05, or Map/Meta/Music). Indexes are 0-4 = ARG0-ARG4.
+    let param_slots = builtin_param_slots(name);
 
     let mut args = Vec::new();
-    let mut slot = 0usize; // ARG0-based index
-
-    for param in sig.params {
+    for (i, param) in sig.params.iter().enumerate() {
+        let slot = param_slots.get(i).copied().flatten();
         match param {
             Param::Data => {
-                // load_palette(PAL): identify the const by address.
+                // load_palette(PAL): resolve the PTR address to a const name.
                 if let Some(ptr_addr) = data_ptr_addr {
                     if let Some(const_name) = find_const_by_addr(ptr_addr, table, cpu_base, prg_rom) {
                         args.push(Expr::Var(const_name));
                     } else {
-                        args.push(slot_or_unknown(arg_slots, slot));
-                        slot += 1;
+                        args.push(slot_or_unknown(arg_slots, slot.unwrap_or(0)));
                     }
                 } else {
-                    args.push(slot_or_unknown(arg_slots, slot));
-                    slot += 1;
+                    args.push(slot_or_unknown(arg_slots, slot.unwrap_or(0)));
                 }
             }
             Param::Text => {
-                // print(x, y, MSG): pointer in PTR ($04/$05), length in ARG2 (slot).
-                // First check if it's a named const, otherwise read the raw bytes as a string.
+                // print(x, y, MSG): PTR points to the string, length in ARG2 (slot 2).
                 if let Some(ptr_addr) = data_ptr_addr {
                     if let Some(const_name) = find_const_by_addr(ptr_addr, table, cpu_base, prg_rom) {
                         args.push(Expr::Var(const_name));
                     } else {
-                        let len = match arg_slots.get(slot).and_then(|e| e.as_ref()) {
+                        let len_slot = 2; // ARG2 always holds the text length for print
+                        let len = match arg_slots.get(len_slot).and_then(|e| e.as_ref()) {
                             Some(Expr::Literal(Value::U8(n))) => *n as usize,
                             _ => 0,
                         };
@@ -394,41 +413,69 @@ fn reconstruct_args(
                             let bytes: Vec<Value> = s.bytes().map(Value::U8).collect();
                             args.push(Expr::Literal(Value::Array(bytes)));
                         } else {
-                            args.push(slot_or_unknown(arg_slots, slot));
-                            slot += 1;
+                            args.push(slot_or_unknown(arg_slots, slot.unwrap_or(0)));
                         }
                     }
                 } else {
-                    args.push(slot_or_unknown(arg_slots, slot));
-                    slot += 1;
+                    args.push(slot_or_unknown(arg_slots, slot.unwrap_or(0)));
                 }
             }
             Param::U8 => {
-                args.push(slot_or_unknown(arg_slots, slot));
-                slot += 1;
+                args.push(slot_or_unknown(arg_slots, slot.unwrap_or(0)));
             }
             Param::U16 => {
-                // U16 arg: lo byte in slot, hi byte in slot+1
-                let lo = match arg_slots.get(slot).and_then(|e| e.as_ref()) {
+                // U16: lo byte at slot, hi byte at slot+1.
+                let s = slot.unwrap_or(0);
+                let lo = match arg_slots.get(s).and_then(|e| e.as_ref()) {
                     Some(Expr::Literal(Value::U8(n))) => *n as u16,
+                    Some(Expr::Var(name)) => {
+                        // A u16 variable loaded into two slots — emit the variable name.
+                        args.push(Expr::Var(name.clone()));
+                        continue;
+                    }
                     _ => 0,
                 };
-                let hi = match arg_slots.get(slot + 1).and_then(|e| e.as_ref()) {
+                let hi = match arg_slots.get(s + 1).and_then(|e| e.as_ref()) {
                     Some(Expr::Literal(Value::U8(n))) => *n as u16,
                     _ => 0,
                 };
                 args.push(Expr::Literal(Value::U16(lo | (hi << 8))));
-                slot += 2;
             }
             Param::Map | Param::Meta | Param::Music => {
                 // Resource args — pointer-based but not yet tracked; emit a placeholder.
-                args.push(slot_or_unknown(arg_slots, slot));
-                slot += 1;
+                args.push(slot_or_unknown(arg_slots, slot.unwrap_or(0)));
             }
         }
     }
 
     args
+}
+
+/// Maps each builtin's parameters to their ARG slot index (0=ARG0 … 4=ARG4).
+/// None means the parameter is passed via a pointer (Data/Text/Map/Meta/Music) rather
+/// than a value slot. Derived from `slots()` calls in `builtins::builtin_call`.
+fn builtin_param_slots(name: &str) -> Vec<Option<usize>> {
+    // ARG0=0x10→0, ARG1=0x11→1, ARG2=0x12→2, ARG3=0x13→3, ARG4=0x14→4
+    match name {
+        "print" => vec![Some(0), Some(1), None],            // text via PTR
+        "print_u8" | "set_tile" => vec![Some(0), Some(1), Some(3)],
+        "print_u16" => vec![Some(0), Some(1), Some(3)],     // u16 at ARG3:ARG4
+        "vram_fill" => vec![Some(0), Some(1)],              // u16 at ARG1:ARG2
+        "sprite" => vec![Some(0), Some(1), Some(2), Some(3), Some(4)],
+        "camera_follow" => vec![Some(0), None],             // u16 at ARG0:ARG1, map via PTR
+        "map_tile" => vec![None, Some(0), Some(2)],         // map via PTR, u16 at ARG0:ARG1
+        "set_map_tile" => vec![None, Some(0), Some(2), Some(3)],
+        _ => sig_default_slots(name),
+    }
+}
+
+/// Fallback: assume sequential ARG0, ARG1, ARG2, … for builtins not listed above.
+fn sig_default_slots(name: &str) -> Vec<Option<usize>> {
+    use crate::builtins::signature;
+    match signature(name) {
+        Some(sig) => (0..sig.params.len()).map(Some).collect(),
+        None => vec![],
+    }
 }
 
 fn slot_or_unknown(slots: &[Option<Expr>; 5], i: usize) -> Expr {
@@ -463,6 +510,16 @@ fn read_string_from_prg(ptr_addr: u16, len: usize, cpu_base: u16, prg_rom: &[u8]
         s.push(b as char);
     }
     Some(s)
+}
+
+/// Finds a variable name by its RAM address from the symbol table.
+fn find_var_by_addr(addr: u16, table: &SymbolTable) -> Option<String> {
+    for v in &table.variables {
+        if v.addr == addr {
+            return Some(v.name.clone());
+        }
+    }
+    None
 }
 
 /// Detects if an address is a builtin function based on the symbol table.

@@ -3,3 +3,14 @@
 .DS_Store
 # wasm-pack output; tools/build-pages.sh copies it into docs/pkg
 crates/nesc-wasm/pkg
+# Rust backups and temp files
+*.rs.bk
+*.prof*
+
+# IDE
+.idea/
+.vscode/
+
+# Logs and environment
+*.log
+.env*

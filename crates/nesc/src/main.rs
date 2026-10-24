@@ -7,8 +7,9 @@ const USAGE: &str = "\
 nesc — compile NESL programs into NES ROMs
 
 USAGE:
-    nesc build <file.nesl> [-o <out.nes>] [--asm]
+    nesc build <file.nesl> [-o <out.nes>] [--asm] [--debug-symbols]
     nesc check <file.nesl>
+    nesc decompile <file.nes> [-s <symbols.syms>] [-o <out.nesl>]
     nesc serve [--port <N>]
     nesc help";
 
@@ -35,17 +36,35 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut input = None;
             let mut output = None;
             let mut asm = false;
+            let mut debug_symbols = false;
             let mut it = rest.iter();
             while let Some(a) = it.next() {
                 match a.as_str() {
                     "-o" | "--output" => output = Some(PathBuf::from(it.next().ok_or("`-o` needs a path")?)),
                     "--asm" => asm = true,
+                    "--debug-symbols" => debug_symbols = true,
                     s if s.starts_with('-') => return Err(format!("unknown option `{s}`\n\n{USAGE}")),
                     s => input = Some(PathBuf::from(s)),
                 }
             }
             let input = input.ok_or_else(|| format!("missing input file\n\n{USAGE}"))?;
-            build(&input, output, asm, cmd == "check")
+            build(&input, output, asm, debug_symbols, cmd == "check")
+        }
+        "decompile" => {
+            let mut input = None;
+            let mut symbols = None;
+            let mut output = None;
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "-s" | "--symbols" => symbols = Some(PathBuf::from(it.next().ok_or("`-s` needs a path")?)),
+                    "-o" | "--output" => output = Some(PathBuf::from(it.next().ok_or("`-o` needs a path")?)),
+                    s if s.starts_with('-') => return Err(format!("unknown option `{s}`\n\n{USAGE}")),
+                    s => input = Some(PathBuf::from(s)),
+                }
+            }
+            let input = input.ok_or_else(|| format!("missing ROM file\n\n{USAGE}"))?;
+            nesc::cmd::decompile::decompile(&input, symbols.as_deref(), output.as_deref())
         }
         #[cfg(not(target_arch = "wasm32"))]
         "serve" => {
@@ -69,7 +88,7 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 }
 
-fn build(input: &Path, output: Option<PathBuf>, asm: bool, check_only: bool) -> Result<(), String> {
+fn build(input: &Path, output: Option<PathBuf>, asm: bool, debug_symbols: bool, check_only: bool) -> Result<(), String> {
     let src = std::fs::read_to_string(input).map_err(|e| format!("cannot read {}: {e}", input.display()))?;
     let out = nesl::compile(&src).map_err(|errs| {
         errs.iter()
@@ -87,6 +106,15 @@ fn build(input: &Path, output: Option<PathBuf>, asm: bool, check_only: bool) -> 
         let lst = path.with_extension("s");
         std::fs::write(&lst, &out.listing).map_err(|e| format!("cannot write {}: {e}", lst.display()))?;
         println!("wrote {}", lst.display());
+    }
+    if debug_symbols {
+        let syms = path.with_extension("nes.syms");
+        let table = nesl::debug_symbols::generate_symbols(&out);
+        let json = serde_json::to_string_pretty(&table)
+            .map_err(|e| format!("cannot serialize symbols: {}", e))?;
+        std::fs::write(&syms, json)
+            .map_err(|e| format!("cannot write {}: {e}", syms.display()))?;
+        println!("wrote {}", syms.display());
     }
     println!("wrote {} ({} bytes PRG used)", path.display(), out.prg_used);
     Ok(())

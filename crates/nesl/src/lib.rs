@@ -5,6 +5,8 @@ pub mod ast;
 pub mod builtins;
 pub mod chr;
 pub mod codegen;
+pub mod debug_symbols;
+pub mod decompile;
 pub mod lexer;
 pub mod mml;
 pub mod parser;

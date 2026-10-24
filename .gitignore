@@ -14,3 +14,4 @@ crates/nesc-wasm/pkg
 # Logs and environment
 *.log
 .env*
+roms/

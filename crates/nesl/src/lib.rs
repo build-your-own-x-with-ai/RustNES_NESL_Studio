@@ -7,6 +7,7 @@ pub mod chr;
 pub mod codegen;
 pub mod debug_symbols;
 pub mod decompile;
+pub mod disasm;
 pub mod lexer;
 pub mod mml;
 pub mod parser;

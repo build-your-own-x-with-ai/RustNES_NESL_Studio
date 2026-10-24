@@ -375,3 +375,141 @@ fn format_operand(mode: AddressingMode, operand: u16) -> String {
         _ => format!("${:04X}", operand),
     }
 }
+
+/// Disassemble a complete NES ROM into 6502 assembly listing.
+/// Works with any NES ROM, not just NESL-compiled ones.
+pub fn disassemble_rom(rom_bytes: &[u8]) -> Result<String, String> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    if rom_bytes.len() < 16 {
+        return Err("文件太小，不是有效的 NES ROM".to_string());
+    }
+
+    // Parse iNES header
+    if &rom_bytes[0..4] != b"NES\x1a" {
+        return Err("不是有效的 NES ROM（缺少 NES 头）".to_string());
+    }
+
+    let prg_banks = rom_bytes[4] as usize;
+    let chr_banks = rom_bytes[5] as usize;
+    let mapper = (rom_bytes[6] >> 4) | (rom_bytes[7] & 0xF0);
+
+    if prg_banks == 0 {
+        return Err("ROM 没有 PRG-ROM".to_string());
+    }
+
+    let prg_size = prg_banks * 16384;
+    let chr_size = chr_banks * 8192;
+    let header_size = 16;
+
+    if rom_bytes.len() < header_size + prg_size {
+        return Err(format!("ROM 文件被截断：期望 {} 字节 PRG", prg_size));
+    }
+
+    let prg_rom = &rom_bytes[header_size..header_size + prg_size];
+
+    // 读取中断向量
+    let (nmi_vec, reset_vec, irq_vec) = if prg_rom.len() >= 6 {
+        let base = prg_rom.len() - 6;
+        (
+            u16::from_le_bytes([prg_rom[base], prg_rom[base + 1]]),
+            u16::from_le_bytes([prg_rom[base + 2], prg_rom[base + 3]]),
+            u16::from_le_bytes([prg_rom[base + 4], prg_rom[base + 5]]),
+        )
+    } else {
+        (0x8000, 0x8000, 0x8000)
+    };
+
+    // 追踪代码块
+    let mut visited = BTreeSet::new();
+    let mut to_visit = vec![reset_vec, nmi_vec, irq_vec];
+    let mut blocks: BTreeMap<u16, Vec<String>> = BTreeMap::new();
+
+    let mut disasm = Disassembler::new(prg_rom);
+
+    while let Some(addr) = to_visit.pop() {
+        if visited.contains(&addr) || addr < 0x8000 {
+            continue;
+        }
+
+        let offset = (addr - 0x8000) as usize;
+        if offset >= prg_rom.len() {
+            continue;
+        }
+
+        visited.insert(addr);
+        let mut lines = Vec::new();
+        let mut pc = offset;
+
+        // 反汇编直到 RTS/RTI/JMP/无效指令
+        for _ in 0..500 {
+            if pc >= prg_rom.len() {
+                break;
+            }
+
+            let Some((instr, size)) = disasm.decode_at(pc) else { break };
+            let cpu_addr = 0x8000u16.wrapping_add(pc as u16);
+
+            // 格式化指令
+            let line = format!("    {}", instr.to_asm(cpu_addr));
+            lines.push(line);
+
+            // 追踪控制流
+            match &instr {
+                Instruction::JSR(target) => {
+                    if *target >= 0x8000 {
+                        to_visit.push(*target);
+                    }
+                    pc += size;
+                }
+                Instruction::JMP(target) => {
+                    if *target >= 0x8000 {
+                        to_visit.push(*target);
+                    }
+                    break;
+                }
+                Instruction::RTS | Instruction::RTI => break,
+                Instruction::BCC(off) | Instruction::BCS(off) |
+                Instruction::BEQ(off) | Instruction::BNE(off) |
+                Instruction::BMI(off) | Instruction::BPL(off) |
+                Instruction::BVC(off) | Instruction::BVS(off) => {
+                    let target = cpu_addr.wrapping_add(size as u16).wrapping_add(*off as u16);
+                    if target >= 0x8000 {
+                        to_visit.push(target);
+                    }
+                    pc += size;
+                }
+                Instruction::Invalid(_) => break,
+                _ => pc += size,
+            }
+        }
+
+        if !lines.is_empty() {
+            blocks.insert(addr, lines);
+        }
+    }
+
+    // 生成输出
+    let mut out = String::new();
+    out.push_str(&"; NES ROM 反汇编\n".to_string());
+    out.push_str(&format!("; PRG: {} 个 bank ({} 字节)\n", prg_banks, prg_size));
+    out.push_str(&format!("; CHR: {} 个 bank ({} 字节)\n", chr_banks, chr_size));
+    out.push_str(&format!("; Mapper: {}\n", mapper));
+    out.push_str(&format!("; Reset 向量: ${:04X}\n\n", reset_vec));
+
+    for (addr, lines) in &blocks {
+        out.push_str(&format!("\nL{:04X}:  ; 代码块起始\n", addr));
+        for line in lines {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    out.push_str("\n; 中断向量表\n");
+    out.push_str(&".org $FFFA\n".to_string());
+    out.push_str(&format!("    .dw ${:04X}  ; NMI\n", nmi_vec));
+    out.push_str(&format!("    .dw ${:04X}  ; RESET\n", reset_vec));
+    out.push_str(&format!("    .dw ${:04X}  ; IRQ/BRK\n", irq_vec));
+
+    Ok(out)
+}

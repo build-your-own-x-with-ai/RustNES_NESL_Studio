@@ -1,6 +1,6 @@
 //! NESL source code generation from decompiled AST.
 
-use crate::decompile::ast_builder::{DecompiledAst, ConstDecl, VarDecl, TileDecl, FunctionDecl, Stmt, Expr};
+use crate::decompile::ast_builder::{DecompiledAst, ConstDecl, StructDecl, VarDecl, TileDecl, FunctionDecl, Stmt, Expr};
 use crate::debug_symbols::{Type, Value};
 use std::fmt::Write;
 
@@ -13,6 +13,14 @@ pub fn generate_source(ast: &DecompiledAst) -> String {
         write_const(&mut out, c);
     }
     if !ast.constants.is_empty() {
+        out.push('\n');
+    }
+
+    // Structs (before the variables that use them)
+    for st in &ast.structs {
+        write_struct(&mut out, st);
+    }
+    if !ast.structs.is_empty() {
         out.push('\n');
     }
 
@@ -47,6 +55,18 @@ fn write_const(out: &mut String, c: &ConstDecl) {
     let _ = write!(out, " = ");
     write_value(out, &c.value);
     out.push_str(";\n");
+}
+
+fn write_struct(out: &mut String, st: &StructDecl) {
+    let _ = write!(out, "struct {} {{ ", st.name);
+    for (i, (name, ty)) in st.fields.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let _ = write!(out, "{}: ", name);
+        write_type(out, ty);
+    }
+    out.push_str(" }\n");
 }
 
 fn write_var(out: &mut String, v: &VarDecl) {

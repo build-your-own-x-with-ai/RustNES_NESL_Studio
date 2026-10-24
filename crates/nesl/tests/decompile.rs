@@ -19,8 +19,6 @@ fn decompile_error_display() {
 #[test]
 fn rom_parser_rejects_invalid_files() {
     use nesl::decompile::rom_parser;
-    use std::io::Write;
-    use std::path::PathBuf;
 
     let tmp = std::env::temp_dir();
     let path = tmp.join("invalid.nes");
@@ -39,7 +37,6 @@ fn rom_parser_rejects_invalid_files() {
 #[test]
 fn symbol_loader_discovers_files() {
     use nesl::decompile::symbol_loader;
-    use std::path::PathBuf;
 
     let tmp = std::env::temp_dir();
     let rom_path = tmp.join("test.nes");

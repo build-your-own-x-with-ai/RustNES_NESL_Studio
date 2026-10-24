@@ -114,3 +114,45 @@ fn parse_generated_symbols() {
     assert_eq!(parsed.variables.len(), symbols.variables.len());
     assert_eq!(parsed.functions.len(), symbols.functions.len());
 }
+
+/// Compiles `src` with symbols, decompiles it through the CLI-equivalent library path.
+fn decompile_src(name: &str, src: &str) -> String {
+    let out = nesl::compile(src).expect("compile");
+    let dir = std::env::temp_dir().join(format!("nesl_rt_{name}_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let rom = dir.join(format!("{name}.nes"));
+    std::fs::write(&rom, &out.rom).unwrap();
+    let syms = nesl::debug_symbols::generate_symbols(&out);
+    std::fs::write(dir.join(format!("{name}.syms")), serde_json::to_string(&syms).unwrap()).unwrap();
+    nesl::decompile::decompile(&rom, None).expect("decompile")
+}
+
+#[test]
+fn struct_variables_are_rebuilt_as_struct_declarations() {
+    let src = "struct Rock { x: u8, y: u8, vx: i8, vy: i8, alive: u8 }
+        struct Shot { x: u8, y: u8, active: u8 }
+        var rocks: [Rock; 6];
+        var shot: Shot;
+        fn main() { rocks[2].x = 5; shot.y = 3; }";
+    let dec = decompile_src("structs", src);
+    assert!(dec.contains("struct Rocks { x: u8, y: u8, vx: i8, vy: i8, alive: u8 }"), "{dec}");
+    assert!(dec.contains("var rocks: [Rocks; 6];"), "{dec}");
+    assert!(dec.contains("struct Shot { x: u8, y: u8, active: u8 }"), "{dec}");
+    assert!(dec.contains("var shot: Shot;"), "{dec}");
+    assert!(!dec.contains("rocks."), "no flattened field names leak out:\n{dec}");
+    // the decompiled program compiles and keeps the same RAM layout
+    let re = nesl::compile(&dec).unwrap_or_else(|e| panic!("recompile failed: {e:?}\n{dec}"));
+    let orig = nesl::compile(src).unwrap();
+    for (k, v) in &orig.vars {
+        assert_eq!(re.vars.get(k), Some(v), "layout of `{k}`");
+    }
+}
+
+#[test]
+fn only_user_tiles_are_decompiled() {
+    let src = "tile 1 = [\"........\", \".1111...\", \".1...1..\", \".1111...\", \".1......\", \".1......\", \"........\", \"........\"];
+        fn main() { print(1, 1, \"hello\"); }";
+    let dec = decompile_src("usertiles", src);
+    let tiles: Vec<&str> = dec.lines().filter(|l| l.starts_with("tile ")).collect();
+    assert_eq!(tiles, vec!["tile 1 = ["], "built-in font and markers are not user tiles:\n{dec}");
+}

@@ -1,7 +1,5 @@
 //! CHR-ROM tile decoding back to pixel strings.
 
-use crate::chr::FONT;
-
 /// Decodes a 16-byte NES tile (2bpp format) back to 8 rows of 8 pixel characters.
 /// Returns pixel values 0-3 as chars: '.' (0), '1' (1), '2' (2), '3' (3).
 pub fn decode_tile(data: &[u8; 16]) -> [String; 8] {
@@ -32,37 +30,12 @@ pub fn decode_tile(data: &[u8; 16]) -> [String; 8] {
     rows
 }
 
-/// Checks if a tile is part of the built-in font (not user-defined).
-pub fn is_font_tile(tile_index: u8, tile_data: &[u8; 16]) -> bool {
-    // Font covers ASCII 0x20-0x5F (space through underscore)
-    // Lowercase letters (0x61-0x7A) map to uppercase
-    let font_index = if (0x61..=0x7A).contains(&tile_index) {
-        tile_index - 0x20 // lowercase maps to uppercase
-    } else if (0x20..=0x5F).contains(&tile_index) {
-        tile_index - 0x20
-    } else {
-        return false; // Outside font range
-    };
-
-    if (font_index as usize) >= FONT.len() {
-        return false;
-    }
-
-    // Compare against the encoded font tile
-    let font_tile = &FONT[font_index as usize];
-    let mut encoded = [0u8; 16];
-
-    // Encode the font tile to compare
-    for y in 0..8 {
-        for x in 0..8 {
-            let bit = font_tile[y] & (1 << x);
-            if bit != 0 {
-                encoded[y] |= 0x80 >> x;
-            }
-        }
-    }
-
-    tile_data == &encoded
+/// Whether `tile_data` is what the compiler puts at `tile_index` when no `tile` overrides
+/// it: the built-in font (ASCII, lowercase reusing uppercase), status-bar markers, or blank.
+pub fn is_builtin_tile(tile_index: u8, tile_data: &[u8; 16]) -> bool {
+    let default = crate::chr::build_chr(&[]);
+    let at = tile_index as usize * 16;
+    default[at..at + 16] == tile_data[..]
 }
 
 /// Scans CHR-ROM and extracts user-defined tiles (non-font tiles).
@@ -78,8 +51,7 @@ pub fn extract_user_tiles(chr_rom: &[u8]) -> Vec<(u8, [String; 8])> {
 
         let tile_data: [u8; 16] = chr_rom[offset..offset + 16].try_into().unwrap();
 
-        // Skip if it's a font tile or empty
-        if !is_font_tile(tile_index as u8, &tile_data) && tile_data != [0; 16] {
+        if !is_builtin_tile(tile_index as u8, &tile_data) {
             let pattern = decode_tile(&tile_data);
             tiles.push((tile_index as u8, pattern));
         }

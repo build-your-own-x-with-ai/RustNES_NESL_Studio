@@ -136,7 +136,7 @@ pub fn decompile(rom_path: &Path, symbols_path: Option<&Path>) -> Result<String,
     source.push_str(&format!("// Decompiled from {}\n", rom_path.display()));
     source.push_str(&format!("// NESL Compiler: {}\n", symbols.compiler_version));
     source.push_str("// Decompiled by NESL decompiler\n");
-    source.push_str("\n");
+    source.push('\n');
 
     // Generate declarations
     source.push_str(&codegen::generate_source(&ast));

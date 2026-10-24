@@ -420,7 +420,7 @@ impl Codegen {
             };
             start.get_or_insert(addr);
             total += size;
-            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size });
+            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size, elem: *fty });
             syms.push((format!("{name}.{fname}"), sym));
         }
         let marker = match len {
@@ -786,7 +786,7 @@ impl Codegen {
                             }
                         }
                         self.globals.insert(name.clone(), Sym::Var { addr, ty: *t });
-                        self.vars.insert(name.clone(), VarInfo { addr, size });
+                        self.vars.insert(name.clone(), VarInfo { addr, size, elem: *t });
                     }
                     VarType::Array(elem, len) => {
                         if init.is_some() {
@@ -794,7 +794,7 @@ impl Codegen {
                         }
                         let (sym, addr, size) = self.alloc_array(*elem, len, *pos)?;
                         self.globals.insert(name.clone(), sym);
-                        self.vars.insert(name.clone(), VarInfo { addr, size });
+                        self.vars.insert(name.clone(), VarInfo { addr, size, elem: *elem });
                     }
                 }
             }

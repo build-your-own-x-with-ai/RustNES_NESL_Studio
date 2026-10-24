@@ -46,6 +46,8 @@ mod tests;
 pub struct VarInfo {
     pub addr: u16,
     pub size: u16,
+    /// Scalar type, or the element type of an array.
+    pub elem: ast::Type,
 }
 
 #[derive(Clone, Debug)]

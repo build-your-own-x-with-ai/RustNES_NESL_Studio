@@ -115,13 +115,16 @@ pub fn generate_symbols(out: &crate::CompileOutput) -> SymbolTable {
 
     // Extract variables from CompileOutput.vars
     for (name, info) in &out.vars {
-        let ty = match info.size {
-            1 => Type::U8,
-            2 => Type::U16,
-            _ => Type::Array {
-                element_ty: Box::new(Type::U8),
-                length: info.size as usize
-            },
+        let elem = match info.elem {
+            crate::ast::Type::U8 => Type::U8,
+            crate::ast::Type::I8 => Type::I8,
+            crate::ast::Type::U16 => Type::U16,
+        };
+        let elem_size = if elem == Type::U16 { 2 } else { 1 };
+        let ty = if info.size == elem_size {
+            elem
+        } else {
+            Type::Array { element_ty: Box::new(elem), length: (info.size / elem_size) as usize }
         };
         variables.push(Variable {
             name: name.clone(),

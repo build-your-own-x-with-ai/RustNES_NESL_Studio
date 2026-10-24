@@ -41,6 +41,13 @@ impl std::error::Error for Diagnostic {}
 #[cfg(test)]
 mod tests;
 
+/// A `const NAME: [T] = [...]` table: element count and type (its ROM label is `d_NAME`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataInfo {
+    pub len: u16,
+    pub elem: ast::Type,
+}
+
 /// A global variable's location, exposed for tooling and tests.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VarInfo {
@@ -55,6 +62,8 @@ pub struct CompileOutput {
     pub rom: Vec<u8>,
     pub symbols: std::collections::BTreeMap<String, u16>,
     pub vars: std::collections::BTreeMap<String, VarInfo>,
+    /// Constant tables, for the debug symbol file.
+    pub data: std::collections::BTreeMap<String, DataInfo>,
     pub listing: String,
     pub prg_used: usize,
     /// 0 (NROM) or 2 (UNROM).
@@ -99,7 +108,8 @@ pub fn compile(src: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
             prg_used: asm.code.len(),
             mapper: 4,
             symbols: asm.symbols,
-            vars: cg_temp.vars,
+            data: cg_temp.data_info.clone(),
+        vars: cg_temp.vars,
             listing: asm.listing,
         });
     }
@@ -124,6 +134,7 @@ pub fn compile(src: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
         prg_used: asm.code.len(),
         mapper: 0,
         symbols: asm.symbols,
+        data: cg_temp.data_info.clone(),
         vars: cg_temp.vars,
         listing: asm.listing,
     })
@@ -162,6 +173,7 @@ fn compile_unrom(prog: &ast::Program, chr: &[u8]) -> Result<CompileOutput, Vec<D
         prg_used: fixed_asm.code.len(),
         mapper: 2,
         symbols: fixed_asm.symbols,
+        data: cg.data_info.clone(),
         vars: cg.vars,
         listing: fixed_asm.listing,
     })

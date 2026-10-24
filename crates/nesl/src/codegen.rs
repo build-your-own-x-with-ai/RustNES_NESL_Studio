@@ -78,6 +78,8 @@ pub struct Codegen {
     pub errors: Vec<Diagnostic>,
     /// Read-only data blocks emitted after all code.
     pub(crate) data: Vec<(String, Vec<u8>)>,
+    /// `const NAME: [T]` tables by name, exposed in `CompileOutput::data`.
+    pub(crate) data_info: BTreeMap<String, crate::DataInfo>,
     pub(crate) tiles: Vec<Tile>,
     inits: Vec<(u16, Type, u16)>,
 }
@@ -210,6 +212,7 @@ impl Codegen {
             ram_next: USER_RAM_START,
             errors: Vec::new(),
             data: Vec::new(),
+            data_info: BTreeMap::new(),
             tiles: Vec::new(),
             inits: Vec::new(),
         }
@@ -759,6 +762,7 @@ impl Codegen {
                 }
                 let label = format!("d_{name}");
                 self.globals.insert(name.clone(), Sym::Data { label: label.clone(), len: elems.len() as u16, elem: *elem });
+                self.data_info.insert(name.clone(), crate::DataInfo { len: elems.len() as u16, elem: *elem });
                 self.data.push((label, lo));
             }
             Decl::Struct { .. } => {}

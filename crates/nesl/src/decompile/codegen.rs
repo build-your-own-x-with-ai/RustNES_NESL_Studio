@@ -224,6 +224,23 @@ fn write_type(out: &mut String, ty: &Type) {
 }
 
 fn write_value(out: &mut String, val: &Value) {
+    // A Value::Array of printable ASCII U8 bytes represents an inline string literal
+    // (e.g. from `print(x, y, "HELLO")`). Emit it as a quoted string.
+    if let Value::Array(vals) = val {
+        let is_string = !vals.is_empty() && vals.iter().all(|v| matches!(v, Value::U8(b) if (0x20..=0x7E).contains(b)));
+        if is_string {
+            out.push('"');
+            for v in vals {
+                if let Value::U8(b) = v {
+                    // Escape backslash and double-quote
+                    if *b == b'\\' || *b == b'"' { out.push('\\'); }
+                    out.push(*b as char);
+                }
+            }
+            out.push('"');
+            return;
+        }
+    }
     match val {
         Value::U8(n) => {
             let _ = write!(out, "{}", n);

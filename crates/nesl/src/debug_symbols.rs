@@ -115,11 +115,7 @@ pub fn generate_symbols(out: &crate::CompileOutput) -> SymbolTable {
 
     // Extract variables from CompileOutput.vars
     for (name, info) in &out.vars {
-        let elem = match info.elem {
-            crate::ast::Type::U8 => Type::U8,
-            crate::ast::Type::I8 => Type::I8,
-            crate::ast::Type::U16 => Type::U16,
-        };
+        let elem = scalar(info.elem);
         let elem_size = if elem == Type::U16 { 2 } else { 1 };
         let ty = if info.size == elem_size {
             elem
@@ -145,15 +141,16 @@ pub fn generate_symbols(out: &crate::CompileOutput) -> SymbolTable {
                 local_vars: Vec::new(),
             });
         } else if let Some(const_name) = name.strip_prefix("d_") {
-            // Data label - extract as constant
+            let Some(info) = out.data.get(const_name) else { continue };
+            let elem = scalar(info.elem);
+            // u16 tables are stored as all low bytes, then all high bytes.
+            let bytes = info.len as usize * if elem == Type::U16 { 2 } else { 1 };
+            let data = prg_bytes(out, *addr, bytes);
             constants.push(Constant {
                 name: const_name.to_string(),
-                ty: Type::Array {
-                    element_ty: Box::new(Type::U8),
-                    length: 0 // Unknown length for now
-                },
+                ty: Type::Array { element_ty: Box::new(elem), length: info.len as usize },
                 addr: *addr,
-                data: Vec::new(), // Will be filled from ROM in later phases
+                data,
             });
         }
     }
@@ -172,6 +169,21 @@ pub fn generate_symbols(out: &crate::CompileOutput) -> SymbolTable {
         0
     };
 
+    // Extract builtin function addresses from the compiler's symbol table.
+    // Every high-level builtin (wait_vblank, ppu_on, sprite, etc.) has a corresponding
+    // `__name` label in the output symbol map.
+    let builtins = crate::builtins::BUILTIN_NAMES
+        .iter()
+        .filter_map(|name| {
+            let label = format!("__{name}");
+            out.symbols.get(&label).map(|&addr| Builtin {
+                name: name.to_string(),
+                addr,
+                signature: String::new(),
+            })
+        })
+        .collect();
+
     SymbolTable {
         version: "1.0.0".into(),
         compiler_version: env!("CARGO_PKG_VERSION").into(),
@@ -181,8 +193,26 @@ pub fn generate_symbols(out: &crate::CompileOutput) -> SymbolTable {
         variables,
         constants,
         functions,
-        resources: Vec::new(), // Will be extracted from CHR-ROM during decompilation
-        builtins: Vec::new(),  // Will be populated in US1
-        source_map: Vec::new(), // Optional for now
+        resources: Vec::new(),
+        builtins,
+        source_map: Vec::new(),
     }
+}
+
+fn scalar(t: crate::ast::Type) -> Type {
+    match t {
+        crate::ast::Type::U8 => Type::U8,
+        crate::ast::Type::I8 => Type::I8,
+        crate::ast::Type::U16 => Type::U16,
+    }
+}
+
+/// `len` bytes of the program at CPU address `addr`, for linearly mapped PRG (NROM, MMC3).
+/// UNROM tables live in the fixed bank at $C000. Out-of-range reads come back empty.
+fn prg_bytes(out: &crate::CompileOutput, addr: u16, len: usize) -> Vec<u8> {
+    let base = if out.mapper == 2 { 0xC000 } else { 0x8000 };
+    let prg_len = out.rom.get(4).map_or(0, |n| *n as usize * 0x4000);
+    let prg_start = 16 + if out.mapper == 2 { prg_len - 0x4000 } else { 0 };
+    let Some(off) = (addr as usize).checked_sub(base) else { return Vec::new() };
+    out.rom.get(prg_start + off..prg_start + off + len).map(<[u8]>::to_vec).unwrap_or_default()
 }

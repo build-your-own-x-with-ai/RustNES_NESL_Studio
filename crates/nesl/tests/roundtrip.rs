@@ -156,3 +156,41 @@ fn only_user_tiles_are_decompiled() {
     let tiles: Vec<&str> = dec.lines().filter(|l| l.starts_with("tile ")).collect();
     assert_eq!(tiles, vec!["tile 1 = ["], "built-in font and markers are not user tiles:\n{dec}");
 }
+
+#[test]
+fn constant_tables_come_back_with_their_bytes() {
+    let src = "const PAL: [u8] = [0x0F, 0x30, 0x16, 0x27];
+        const STEP: [i8] = [-2, -1, 1, 2];
+        const NOTES: [u16] = [300, 1000];
+        fn main() { load_palette(PAL); }";
+    let dec = decompile_src("consts", src);
+    assert!(dec.contains("const PAL: [u8] = [15, 48, 22, 39];"), "{dec}");
+    assert!(dec.contains("const STEP: [i8] = [-2, -1, 1, 2];"), "{dec}");
+    assert!(dec.contains("const NOTES: [u16] = [300, 1000];"), "{dec}");
+    nesl::compile(&dec).unwrap_or_else(|e| panic!("recompile failed: {e:?}\n{dec}"));
+}
+
+#[test]
+fn function_body_builtin_calls_decompiled() {
+    let src = r#"
+        const PAL: [u8] = [0x0F, 0x30, 0x16, 0x27];
+        fn main() {
+            ppu_off();
+            load_palette(PAL);
+            print(9, 3, "HELLO NES!");
+            ppu_on();
+            loop { wait_vblank(); }
+        }
+    "#;
+    let dec = decompile_src("fn_body", src);
+    // Builtin calls must appear with correct names
+    assert!(dec.contains("ppu_off()"), "ppu_off missing:\n{dec}");
+    assert!(dec.contains("load_palette(PAL)"), "load_palette missing:\n{dec}");
+    assert!(dec.contains("ppu_on()"), "ppu_on missing:\n{dec}");
+    assert!(dec.contains("wait_vblank()"), "wait_vblank missing:\n{dec}");
+    assert!(dec.contains("\"HELLO NES!\""), "string literal missing:\n{dec}");
+    // The decompiled output must recompile successfully
+    nesl::compile(&dec).unwrap_or_else(|e| panic!("recompile failed: {e:?}\n{dec}"));
+}
+
+

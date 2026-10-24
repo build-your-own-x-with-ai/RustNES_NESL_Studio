@@ -107,7 +107,13 @@ pub fn build_ast(table: &SymbolTable, rom: &RomImage) -> Result<DecompiledAst, D
                 Some((_, g)) => g.push(v),
                 None => groups.push((base.to_string(), vec![v])),
             },
-            None => variables.push(VarDecl { name: v.name.clone(), ty: v.ty.clone(), init: v.init_value.clone() }),
+            None => {
+                variables.push(VarDecl {
+                    name: v.name.clone(),
+                    ty: v.ty.clone(),
+                    init: v.init_value.clone()
+                });
+            }
         }
     }
     let mut structs: Vec<StructDecl> = Vec::new();

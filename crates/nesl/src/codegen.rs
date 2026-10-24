@@ -423,7 +423,7 @@ impl Codegen {
             };
             start.get_or_insert(addr);
             total += size;
-            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size, elem: *fty });
+            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size, elem: *fty, init: None });
             syms.push((format!("{name}.{fname}"), sym));
         }
         let marker = match len {
@@ -790,15 +790,18 @@ impl Codegen {
                             }
                         }
                         self.globals.insert(name.clone(), Sym::Var { addr, ty: *t });
-                        self.vars.insert(name.clone(), VarInfo { addr, size, elem: *t });
-                    }
+                        let init_val = init.as_ref().and_then(|_| {
+                            let v = self.inits.last();
+                            v.filter(|(a, _, _)| *a == addr).map(|(_, _, v)| *v)
+                        });
+                        self.vars.insert(name.clone(), VarInfo { addr, size, elem: *t, init: init_val });                    }
                     VarType::Array(elem, len) => {
                         if init.is_some() {
                             return self.err(*pos, "RAM arrays cannot have an initializer (they start zeroed)");
                         }
                         let (sym, addr, size) = self.alloc_array(*elem, len, *pos)?;
                         self.globals.insert(name.clone(), sym);
-                        self.vars.insert(name.clone(), VarInfo { addr, size, elem: *elem });
+                        self.vars.insert(name.clone(), VarInfo { addr, size, elem: *elem, init: None });
                     }
                 }
             }

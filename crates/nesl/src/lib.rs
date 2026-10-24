@@ -55,6 +55,8 @@ pub struct VarInfo {
     pub size: u16,
     /// Scalar type, or the element type of an array.
     pub elem: ast::Type,
+    /// Non-zero initial value (from `var x: u8 = 120`), if any.
+    pub init: Option<u16>,
 }
 
 #[derive(Clone, Debug)]

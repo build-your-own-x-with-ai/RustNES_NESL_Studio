@@ -118,15 +118,20 @@ pub fn generate_symbols(out: &crate::CompileOutput) -> SymbolTable {
         let elem = scalar(info.elem);
         let elem_size = if elem == Type::U16 { 2 } else { 1 };
         let ty = if info.size == elem_size {
-            elem
+            elem.clone()
         } else {
-            Type::Array { element_ty: Box::new(elem), length: (info.size / elem_size) as usize }
+            Type::Array { element_ty: Box::new(elem.clone()), length: (info.size / elem_size) as usize }
         };
+        let init_value = info.init.map(|val| match elem {
+            Type::U16 => Value::U16(val),
+            Type::I8 => Value::I8(val as u8 as i8),
+            _ => Value::U8(val as u8),
+        });
         variables.push(Variable {
             name: name.clone(),
             ty,
             addr: info.addr,
-            init_value: None, // Will be filled from disassembly in later phases
+            init_value,
         });
     }
 

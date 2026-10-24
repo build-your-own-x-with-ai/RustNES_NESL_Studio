@@ -178,7 +178,7 @@ pub fn generate_symbols(out: &crate::CompileOutput) -> SymbolTable {
         variables,
         constants,
         functions,
-        resources: Vec::new(), // Will be populated in US2
+        resources: Vec::new(), // Will be extracted from CHR-ROM during decompilation
         builtins: Vec::new(),  // Will be populated in US1
         source_map: Vec::new(), // Optional for now
     }

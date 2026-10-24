@@ -1,7 +1,7 @@
 //! AST reconstruction from symbols and ROM data.
 
 use crate::debug_symbols::{SymbolTable, Type, Value};
-use crate::decompile::DecompileError;
+use crate::decompile::{DecompileError, rom_parser::RomImage};
 
 /// Reconstructed NESL AST (simplified representation).
 #[derive(Debug, Clone)]
@@ -29,7 +29,7 @@ pub struct VarDecl {
 #[derive(Debug, Clone)]
 pub struct TileDecl {
     pub index: u8,
-    pub pattern: Vec<String>,
+    pub pattern: [String; 8],
 }
 
 #[derive(Debug, Clone)]
@@ -59,9 +59,10 @@ pub enum Expr {
 }
 
 /// Builds a decompiled AST from symbol table and ROM data.
-pub fn build_ast(table: &SymbolTable, _rom: &[u8]) -> Result<DecompiledAst, DecompileError> {
+pub fn build_ast(table: &SymbolTable, rom: &RomImage) -> Result<DecompiledAst, DecompileError> {
     let mut constants = Vec::new();
     let mut variables = Vec::new();
+    let mut tiles = Vec::new();
     let mut functions = Vec::new();
 
     // Restore constants from symbol table
@@ -88,6 +89,15 @@ pub fn build_ast(table: &SymbolTable, _rom: &[u8]) -> Result<DecompiledAst, Deco
         });
     }
 
+    // Extract tiles from CHR-ROM
+    if !rom.chr_rom.is_empty() {
+        // Extract user-defined tiles (non-font tiles)
+        let user_tiles = super::chr_decode::extract_user_tiles(&rom.chr_rom);
+        for (index, pattern) in user_tiles {
+            tiles.push(TileDecl { index, pattern });
+        }
+    }
+
     // Restore function signatures (body will be empty stubs for now)
     for f in &table.functions {
         functions.push(FunctionDecl {
@@ -107,7 +117,7 @@ pub fn build_ast(table: &SymbolTable, _rom: &[u8]) -> Result<DecompiledAst, Deco
     Ok(DecompiledAst {
         constants,
         variables,
-        tiles: Vec::new(), // Will be populated in US2
+        tiles,
         functions,
     })
 }

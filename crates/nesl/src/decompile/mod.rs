@@ -4,6 +4,7 @@ pub mod rom_parser;
 pub mod symbol_loader;
 pub mod ast_builder;
 pub mod codegen;
+pub mod chr_decode;
 
 use std::path::Path;
 use std::io;
@@ -125,8 +126,8 @@ pub fn decompile(rom_path: &Path, symbols_path: Option<&Path>) -> Result<String,
         rom.chr_rom.len(),
     )?;
 
-    // 5. Build AST from symbols
-    let ast = ast_builder::build_ast(&symbols, &rom.prg_rom)?;
+    // 5. Build AST from symbols and ROM
+    let ast = ast_builder::build_ast(&symbols, &rom)?;
 
     // 6. Generate NESL source code
     let mut source = String::new();

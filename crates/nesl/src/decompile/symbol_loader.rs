@@ -43,15 +43,27 @@ pub fn validate_symbols(
     }
 
     if table.prg_size != rom_prg_size {
-        return Err(DecompileError::SymbolMismatch {
-            reason: format!("PRG 大小不匹配：符号表 {}, ROM {}", table.prg_size, rom_prg_size),
-        });
+        // Mapper 2 (UNROM) and others pad to power-of-2 banks
+        // Allow ROM to be larger than symbol table's prg_used, but not smaller
+        if rom_prg_size < table.prg_size {
+            return Err(DecompileError::SymbolMismatch {
+                reason: format!("PRG 大小不匹配：符号表 {}, ROM {} (ROM 太小)", table.prg_size, rom_prg_size),
+            });
+        }
+        // ROM is larger: acceptable padding, warn but continue
+        eprintln!("注意：ROM PRG 大小 ({}) 大于符号表记录 ({})，可能是 mapper 填充", rom_prg_size, table.prg_size);
     }
 
     if table.chr_size != rom_chr_size {
-        return Err(DecompileError::SymbolMismatch {
-            reason: format!("CHR 大小不匹配：符号表 {}, ROM {}", table.chr_size, rom_chr_size),
-        });
+        // Some games use CHR-RAM (rom_chr_size = 0) instead of CHR-ROM
+        // Allow mismatch if ROM has no CHR (CHR-RAM setup)
+        if rom_chr_size == 0 && table.chr_size > 0 {
+            eprintln!("注意：ROM 使用 CHR-RAM，符号表记录了 CHR-ROM 大小 {}", table.chr_size);
+        } else if rom_chr_size != table.chr_size {
+            return Err(DecompileError::SymbolMismatch {
+                reason: format!("CHR 大小不匹配：符号表 {}, ROM {}", table.chr_size, rom_chr_size),
+            });
+        }
     }
 
     Ok(())

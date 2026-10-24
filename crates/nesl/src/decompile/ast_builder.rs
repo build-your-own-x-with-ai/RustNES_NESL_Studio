@@ -533,8 +533,28 @@ fn reconstruct_args(
                 args.push(Expr::Literal(Value::U16(lo | (hi << 8))));
             }
             Param::Map | Param::Meta | Param::Music => {
-                // Resource args — pointer-based but not yet tracked; emit a placeholder.
-                args.push(slot_or_unknown(arg_slots, slot.unwrap_or(0)));
+                // Resource args — pointer-based. Generate a placeholder identifier.
+                // The user will need to define this resource for the code to compile.
+                let resource_type = match param {
+                    Param::Map => "MAP_TODO",
+                    Param::Meta => "META_TODO",
+                    Param::Music => "MUSIC_TODO",
+                    _ => "RESOURCE_TODO",
+                };
+                // Include the index if not 0
+                let placeholder = match slot.and_then(|s| arg_slots.get(s)).and_then(|e| e.as_ref()) {
+                    Some(Expr::Literal(Value::U8(0))) | Some(Expr::Literal(Value::U16(0))) | None => {
+                        resource_type.to_string()
+                    }
+                    Some(Expr::Literal(Value::U8(n))) => {
+                        format!("{}_{}",resource_type, n)
+                    }
+                    Some(Expr::Literal(Value::U16(n))) => {
+                        format!("{}_{}",resource_type, n)
+                    }
+                    _ => resource_type.to_string(),
+                };
+                args.push(Expr::Var(placeholder));
             }
         }
     }

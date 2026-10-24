@@ -136,10 +136,20 @@ pub fn decompile(rom_path: &Path, symbols_path: Option<&Path>) -> Result<String,
     source.push_str(&format!("// Decompiled from {}\n", rom_path.display()));
     source.push_str(&format!("// NESL Compiler: {}\n", symbols.compiler_version));
     source.push_str("// Decompiled by NESL decompiler\n");
+
+    // Check if AST contains Map/Meta/Music placeholders
+    let generated_code = codegen::generate_source(&ast);
+    if generated_code.contains("MAP_TODO") || generated_code.contains("META_TODO") || generated_code.contains("MUSIC_TODO") {
+        source.push_str("//\n");
+        source.push_str("// ⚠️  WARNING: This code contains resource placeholders (MAP_TODO, META_TODO, MUSIC_TODO)\n");
+        source.push_str("// These need to be replaced with actual map/meta/music definitions before recompiling.\n");
+        source.push_str("// Example: Replace 'draw_map(MAP_TODO)' with 'draw_map(YOUR_MAP_NAME)'\n");
+        source.push_str("// after defining: map YOUR_MAP_NAME = [...]\n");
+    }
     source.push('\n');
 
     // Generate declarations
-    source.push_str(&codegen::generate_source(&ast));
+    source.push_str(&generated_code);
 
     Ok(source)
 }

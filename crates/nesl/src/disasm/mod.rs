@@ -491,7 +491,7 @@ pub fn disassemble_rom(rom_bytes: &[u8]) -> Result<String, String> {
 
     // 生成输出
     let mut out = String::new();
-    out.push_str(&"; NES ROM 反汇编\n".to_string());
+    out.push_str("; NES ROM 反汇编\n");
     out.push_str(&format!("; PRG: {} 个 bank ({} 字节)\n", prg_banks, prg_size));
     out.push_str(&format!("; CHR: {} 个 bank ({} 字节)\n", chr_banks, chr_size));
     out.push_str(&format!("; Mapper: {}\n", mapper));
@@ -506,7 +506,7 @@ pub fn disassemble_rom(rom_bytes: &[u8]) -> Result<String, String> {
     }
 
     out.push_str("\n; 中断向量表\n");
-    out.push_str(&".org $FFFA\n".to_string());
+    out.push_str(".org $FFFA\n");
     out.push_str(&format!("    .dw ${:04X}  ; NMI\n", nmi_vec));
     out.push_str(&format!("    .dw ${:04X}  ; RESET\n", reset_vec));
     out.push_str(&format!("    .dw ${:04X}  ; IRQ/BRK\n", irq_vec));

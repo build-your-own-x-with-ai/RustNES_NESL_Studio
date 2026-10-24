@@ -15,3 +15,7 @@ crates/nesc-wasm/pkg
 *.log
 .env*
 roms/
+
+# Disassembly output
+examples/disasm/*.asm
+examples/*.syms

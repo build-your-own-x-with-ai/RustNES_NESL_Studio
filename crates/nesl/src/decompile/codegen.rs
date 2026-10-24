@@ -191,7 +191,11 @@ fn write_type(out: &mut String, ty: &Type) {
         Type::Array { element_ty, length } => {
             out.push('[');
             write_type(out, element_ty);
-            let _ = write!(out, "; {}]", length);
+            if *length > 0 {
+                let _ = write!(out, "; {}]", length);
+            } else {
+                out.push(']');
+            }
         }
         Type::Struct { name } => {
             let _ = write!(out, "{}", name);

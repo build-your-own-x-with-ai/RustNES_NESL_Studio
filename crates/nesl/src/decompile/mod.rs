@@ -101,9 +101,44 @@ pub fn parse_symbols(json: &str) -> Result<crate::debug_symbols::SymbolTable, De
 ///
 /// # Returns
 /// The decompiled NESL source code as a String.
-pub fn decompile(_rom_path: &Path, _symbols_path: Option<&Path>) -> Result<String, DecompileError> {
-    // Placeholder - will be implemented in Phase 3
-    Err(DecompileError::InvalidRom {
-        reason: "Not implemented yet".into(),
-    })
+pub fn decompile(rom_path: &Path, symbols_path: Option<&Path>) -> Result<String, DecompileError> {
+    // 1. Discover symbols file if not provided
+    let syms_path = match symbols_path {
+        Some(p) => p.to_path_buf(),
+        None => symbol_loader::discover_symbols(rom_path)
+            .ok_or_else(|| DecompileError::SymbolsNotFound {
+                path: format!("{}.syms", rom_path.display()),
+            })?,
+    };
+
+    // 2. Load ROM
+    let rom = rom_parser::load_rom(rom_path)?;
+
+    // 3. Load symbols
+    let symbols = symbol_loader::load_symbols(&syms_path)?;
+
+    // 4. Validate symbols match ROM
+    symbol_loader::validate_symbols(
+        &symbols,
+        rom.header.mapper,
+        rom.prg_rom.len(),
+        rom.chr_rom.len(),
+    )?;
+
+    // 5. Build AST from symbols
+    let ast = ast_builder::build_ast(&symbols, &rom.prg_rom)?;
+
+    // 6. Generate NESL source code
+    let mut source = String::new();
+
+    // Add header comment
+    source.push_str(&format!("// Decompiled from {}\n", rom_path.display()));
+    source.push_str(&format!("// NESL Compiler: {}\n", symbols.compiler_version));
+    source.push_str("// Decompiled by NESL decompiler\n");
+    source.push_str("\n");
+
+    // Generate declarations
+    source.push_str(&codegen::generate_source(&ast));
+
+    Ok(source)
 }

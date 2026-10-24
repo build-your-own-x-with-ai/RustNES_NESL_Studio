@@ -84,43 +84,43 @@
 
 ### Tests for User Story 1 (TDD - Write FIRST, ensure they FAIL) ⚠️
 
-- [ ] T030 [P] [US1] Write failing test `roundtrip_hello_basic` in `crates/nesl/tests/roundtrip.rs`: compile examples/hello.nesl → generate stub symbols → decompile (should fail: not implemented) → assert decompiled code is valid NESL
-- [ ] T031 [P] [US1] Write failing test `symbols_generation_hello` in `crates/nesl/tests/decompile.rs`: compile examples/hello.nesl → generate symbols → assert symbols.variables contains "x" with ty=u8, addr>0, init_value=Some(120)
-- [ ] T032 [P] [US1] Write failing test `parse_generated_symbols` in `crates/nesl/tests/decompile.rs`: generate symbols JSON → parse_symbols() → assert SymbolTable fields match
+- [X] T030 [P] [US1] Write failing test `roundtrip_hello_basic` in `crates/nesl/tests/roundtrip.rs`: compile examples/hello.nesl → generate stub symbols → decompile (should fail: not implemented) → assert decompiled code is valid NESL
+- [X] T031 [P] [US1] Write failing test `symbols_generation_hello` in `crates/nesl/tests/decompile.rs`: compile examples/hello.nesl → generate symbols → assert symbols.variables contains "x" with ty=u8, addr>0, init_value=Some(120)
+- [X] T032 [P] [US1] Write failing test `parse_generated_symbols` in `crates/nesl/tests/decompile.rs`: generate symbols JSON → parse_symbols() → assert SymbolTable fields match
 
 ### Symbol Table Generation for US1
 
-- [ ] T033 [US1] Implement variable extraction in `generate_symbols()` in `crates/nesl/src/debug_symbols.rs`: iterate `out.vars`, populate `SymbolTable.variables` with name, type (from codegen), addr, init_value (from CompileOutput)
-- [ ] T034 [US1] Implement constant extraction in `generate_symbols()`: iterate `out.constants`, populate `SymbolTable.constants` with name, ty, addr, data (read from out.rom at addr)
-- [ ] T035 [US1] Implement function extraction in `generate_symbols()`: iterate `out.functions`, populate `SymbolTable.functions` with name, addr, params (from parser AST), return_ty, local_vars (empty for now)
-- [ ] T036 [US1] Implement builtin mapping in `generate_symbols()`: hardcode runtime addresses from crates/nesl/src/runtime.rs (e.g. __sprite: 0xC000), populate `SymbolTable.builtins` with name, addr, signature (from builtins.rs)
-- [ ] T037 [US1] Add `mapper`, `prg_size`, `chr_size` fields to `generate_symbols()` from `out.mapper`, `out.rom.len()`, `out.chr.len()`
-- [ ] T038 [US1] Write symbols JSON to `.syms` file in `crates/nesc/src/cmd/build.rs` when `--debug-symbols` flag present: call `serde_json::to_string_pretty(&symbols)`, write to `<output>.syms`
+- [X] T033 [US1] Implement variable extraction in `generate_symbols()` in `crates/nesl/src/debug_symbols.rs`: iterate `out.vars`, populate `SymbolTable.variables` with name, type (from codegen), addr, init_value (from CompileOutput)
+- [X] T034 [US1] Implement constant extraction in `generate_symbols()`: iterate `out.constants`, populate `SymbolTable.constants` with name, ty, addr, data (read from out.rom at addr)
+- [X] T035 [US1] Implement function extraction in `generate_symbols()`: iterate `out.functions`, populate `SymbolTable.functions` with name, addr, params (from parser AST), return_ty, local_vars (empty for now)
+- [X] T036 [US1] Implement builtin mapping in `generate_symbols()`: hardcode runtime addresses from crates/nesl/src/runtime.rs (e.g. __sprite: 0xC000), populate `SymbolTable.builtins` with name, addr, signature (from builtins.rs)
+- [X] T037 [US1] Add `mapper`, `prg_size`, `chr_size` fields to `generate_symbols()` from `out.mapper`, `out.rom.len()`, `out.chr.len()`
+- [X] T038 [US1] Write symbols JSON to `.syms` file in `crates/nesc/src/cmd/build.rs` when `--debug-symbols` flag present: call `serde_json::to_string_pretty(&symbols)`, write to `<output>.syms`
 
 ### Decompile Core for US1
 
-- [ ] T039 [US1] Create `crates/nesl/src/decompile/symbol_loader.rs` with `load_symbols(syms_path: &Path) -> Result<SymbolTable, DecompileError>` that reads file, calls `parse_symbols()`
-- [ ] T040 [US1] Implement `decompile(rom_path: &Path, symbols_path: Option<&Path>) -> Result<String, DecompileError>` in `crates/nesl/src/decompile/mod.rs`: discover `.syms` if None, load ROM, load symbols, validate consistency (mapper, prg_size match), return stub output "// Decompiled from <rom>\n"
-- [ ] T041 [US1] Implement symbol table validation in `decompile()`: check symbols.version starts with "1.", symbols.mapper matches ROM header mapper, symbols.prg_size/chr_size match ROM, return SymbolMismatch error if mismatch
-- [ ] T042 [US1] Create `crates/nesl/src/decompile/ast_builder.rs` with `build_ast(rom: &RomImage, symbols: &SymbolTable) -> Vec<TopLevel>` returning empty Vec for now
-- [ ] T043 [US1] Implement variable restoration in `build_ast()`: iterate `symbols.variables`, create `TopLevel::Var { name, ty, init: Some(Expr::Literal(init_value)) }` for each
-- [ ] T044 [US1] Implement constant restoration in `build_ast()`: iterate `symbols.constants`, create `TopLevel::Const { name, ty, value: ConstValue::Array(data) }` for each
-- [ ] T045 [US1] Implement function signature restoration in `build_ast()`: iterate `symbols.functions`, create `TopLevel::Function { name, params, return_ty, body: Block { stmts: vec![] } }` (empty body for now)
-- [ ] T046 [US1] Create `crates/nesl/src/decompile/codegen.rs` with `generate_source(ast: &[TopLevel]) -> String` that formats TopLevel::Var as "var name: ty = init_value;", TopLevel::Const as "const name: [ty] = [...];", TopLevel::Function as "fn name(params) -> return_ty {}"
-- [ ] T047 [US1] Add header comment in `generate_source()`: prepend "// Decompiled from <rom>\n// NESL Compiler: <compiler_version>\n// Decompiled at: <timestamp>\n\n" to output
-- [ ] T048 [US1] Connect components in `decompile()`: call `build_ast(rom, symbols)`, call `generate_source(&ast)`, return result
+- [X] T039 [US1] Create `crates/nesl/src/decompile/symbol_loader.rs` with `load_symbols(syms_path: &Path) -> Result<SymbolTable, DecompileError>` that reads file, calls `parse_symbols()`
+- [X] T040 [US1] Implement `decompile(rom_path: &Path, symbols_path: Option<&Path>) -> Result<String, DecompileError>` in `crates/nesl/src/decompile/mod.rs`: discover `.syms` if None, load ROM, load symbols, validate consistency (mapper, prg_size match), return stub output "// Decompiled from <rom>\n"
+- [X] T041 [US1] Implement symbol table validation in `decompile()`: check symbols.version starts with "1.", symbols.mapper matches ROM header mapper, symbols.prg_size/chr_size match ROM, return SymbolMismatch error if mismatch
+- [X] T042 [US1] Create `crates/nesl/src/decompile/ast_builder.rs` with `build_ast(rom: &RomImage, symbols: &SymbolTable) -> Vec<TopLevel>` returning empty Vec for now
+- [X] T043 [US1] Implement variable restoration in `build_ast()`: iterate `symbols.variables`, create `TopLevel::Var { name, ty, init: Some(Expr::Literal(init_value)) }` for each
+- [X] T044 [US1] Implement constant restoration in `build_ast()`: iterate `symbols.constants`, create `TopLevel::Const { name, ty, value: ConstValue::Array(data) }` for each
+- [X] T045 [US1] Implement function signature restoration in `build_ast()`: iterate `symbols.functions`, create `TopLevel::Function { name, params, return_ty, body: Block { stmts: vec![] } }` (empty body for now)
+- [X] T046 [US1] Create `crates/nesl/src/decompile/codegen.rs` with `generate_source(ast: &[TopLevel]) -> String` that formats TopLevel::Var as "var name: ty = init_value;", TopLevel::Const as "const name: [ty] = [...];", TopLevel::Function as "fn name(params) -> return_ty {}"
+- [X] T047 [US1] Add header comment in `generate_source()`: prepend "// Decompiled from <rom>\n// NESL Compiler: <compiler_version>\n// Decompiled at: <timestamp>\n\n" to output
+- [X] T048 [US1] Connect components in `decompile()`: call `build_ast(rom, symbols)`, call `generate_source(&ast)`, return result
 
 ### CLI Integration for US1
 
-- [ ] T049 [US1] Implement `nesc decompile` command in `crates/nesc/src/cmd/decompile.rs`: parse args (rom_path, --symbols, -o), call `nesl::decompile::decompile()`, write output to file or stdout
-- [ ] T050 [US1] Add error handling in CLI: match `DecompileError` variants, print user-friendly messages ("找不到符号表文件: <path>\n提示：使用 `nesc build --debug-symbols` 生成符号表"), exit with appropriate code (1-5 per contracts/decompile-api.md)
-- [ ] T051 [US1] Add `--validate` flag to `nesc decompile`: only validate symbols vs ROM, print "✓ 符号表有效" and exit 0, or error and exit 3-4
+- [X] T049 [US1] Implement `nesc decompile` command in `crates/nesc/src/cmd/decompile.rs`: parse args (rom_path, --symbols, -o), call `nesl::decompile::decompile()`, write output to file or stdout
+- [X] T050 [US1] Add error handling in CLI: match `DecompileError` variants, print user-friendly messages ("找不到符号表文件: <path>\n提示：使用 `nesc build --debug-symbols` 生成符号表"), exit with appropriate code (1-5 per contracts/decompile-api.md)
+- [X] T051 [US1] Add `--validate` flag to `nesc decompile`: only validate symbols vs ROM, print "✓ 符号表有效" and exit 0, or error and exit 3-4
 
 ### Validation for US1
 
-- [ ] T052 [US1] Run test `roundtrip_hello_basic`: compile hello.nesl with --debug-symbols → decompile → parse decompiled code with nesl::parser → assert AST contains main function, variable x
-- [ ] T053 [US1] Run test `symbols_generation_hello`: assert symbols.variables[0].name == "x", symbols.constants[0].name == "PAL", symbols.functions[0].name == "main"
-- [ ] T054 [US1] Manual validation: run `nesc build examples/hello.nesl --debug-symbols && nesc decompile examples/hello.nes -o /tmp/hello.dec.nesl && cat /tmp/hello.dec.nesl`, verify output contains `var x: u8 = 124;`, `const PAL: [u8] = [...]`, `fn main() {}`
+- [X] T052 [US1] Run test `roundtrip_hello_basic`: compile hello.nesl with --debug-symbols → decompile → parse decompiled code with nesl::parser → assert AST contains main function, variable x
+- [X] T053 [US1] Run test `symbols_generation_hello`: assert symbols.variables[0].name == "x", symbols.constants[0].name == "PAL", symbols.functions[0].name == "main"
+- [X] T054 [US1] Manual validation: run `nesc build examples/hello.nesl --debug-symbols && nesc decompile examples/hello.nes -o /tmp/hello.dec.nesl && cat /tmp/hello.dec.nesl`, verify output contains `var x: u8 = 124;`, `const PAL: [u8] = [...]`, `fn main() {}`
 
 **Checkpoint**: User Story 1 完成 — 基本往返流程可用，符号表生成和反编译核心工作
 

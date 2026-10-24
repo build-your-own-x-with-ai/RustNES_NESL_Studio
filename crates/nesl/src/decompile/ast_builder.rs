@@ -59,12 +59,55 @@ pub enum Expr {
 }
 
 /// Builds a decompiled AST from symbol table and ROM data.
-pub fn build_ast(_table: &SymbolTable, _rom: &[u8]) -> Result<DecompiledAst, DecompileError> {
-    // Stub - will be implemented in Phase 2
+pub fn build_ast(table: &SymbolTable, _rom: &[u8]) -> Result<DecompiledAst, DecompileError> {
+    let mut constants = Vec::new();
+    let mut variables = Vec::new();
+    let mut functions = Vec::new();
+
+    // Restore constants from symbol table
+    for c in &table.constants {
+        // Skip constants with zero length (no data yet)
+        if let Type::Array { length, .. } = &c.ty {
+            if *length == 0 {
+                continue;
+            }
+        }
+        constants.push(ConstDecl {
+            name: c.name.clone(),
+            ty: c.ty.clone(),
+            value: Value::Array(vec![]), // TODO: read from ROM in later phases
+        });
+    }
+
+    // Restore variables from symbol table
+    for v in &table.variables {
+        variables.push(VarDecl {
+            name: v.name.clone(),
+            ty: v.ty.clone(),
+            init: v.init_value.clone(),
+        });
+    }
+
+    // Restore function signatures (body will be empty stubs for now)
+    for f in &table.functions {
+        functions.push(FunctionDecl {
+            name: f.name.clone(),
+            params: f.params.clone(),
+            return_ty: f.return_ty.clone(),
+            body: vec![
+                // Placeholder body - actual disassembly will come in later phases
+                Stmt::Call {
+                    func: "wait_vblank".to_string(),
+                    args: vec![],
+                }
+            ],
+        });
+    }
+
     Ok(DecompiledAst {
-        constants: Vec::new(),
-        variables: Vec::new(),
-        tiles: Vec::new(),
-        functions: Vec::new(),
+        constants,
+        variables,
+        tiles: Vec::new(), // Will be populated in US2
+        functions,
     })
 }

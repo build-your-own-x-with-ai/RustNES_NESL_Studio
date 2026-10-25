@@ -201,3 +201,71 @@ fn test_commercial_rom_functions() {
         println!("Skipping commercial ROM test (file not found)");
     }
 }
+
+#[test]
+fn test_pseudocode_generation() {
+    let rom_bytes = std::fs::read("../../examples/sprite.nes").expect("sprite.nes not found");
+
+    println!("=== Pseudo-code Generation ===");
+
+    let pseudocode = nesl::decompile::advanced::decompile_to_pseudocode(&rom_bytes)
+        .expect("Failed to generate pseudocode");
+
+    println!("Generated {} bytes of pseudo-code", pseudocode.len());
+
+    // Check that it contains expected sections
+    assert!(pseudocode.contains("// ========== Variables"), "Should have variables section");
+    assert!(pseudocode.contains("// ========== Functions"), "Should have functions section");
+    assert!(pseudocode.contains("void reset()"), "Should have reset function");
+    assert!(pseudocode.contains("void nmi()"), "Should have nmi function");
+
+    // Check variable declarations
+    assert!(pseudocode.contains("player_x"), "Should name player_x");
+    assert!(pseudocode.contains("player_y"), "Should name player_y");
+
+    // Check pseudo-code statements
+    assert!(pseudocode.contains("A = "), "Should have assignments");
+    assert!(pseudocode.contains("++"), "Should have increments");
+
+    // Show a sample
+    let lines: Vec<_> = pseudocode.lines().take(50).collect();
+    println!("\nFirst 50 lines:");
+    for line in lines {
+        println!("{}", line);
+    }
+}
+
+#[test]
+fn test_end_to_end_commercial() {
+    let rom_path = "../../roms/FC_ROMS-main/ROM/0942/Solomon's Key (U) [!].nes";
+
+    if let Ok(rom_bytes) = std::fs::read(rom_path) {
+        println!("=== End-to-End: Solomon's Key ==="
+);
+
+        let pseudocode = nesl::decompile::advanced::decompile_to_pseudocode(&rom_bytes)
+            .expect("Failed to generate pseudocode");
+
+        println!("Generated {} lines of pseudo-code", pseudocode.lines().count());
+        println!("Size: {} bytes", pseudocode.len());
+
+        // Should have substantial content
+        assert!(pseudocode.len() > 10000, "Should generate substantial output");
+        assert!(pseudocode.lines().count() > 200, "Should have many lines");
+
+        // Check structure
+        assert!(pseudocode.contains("void nmi()"), "Should have NMI handler");
+        assert!(pseudocode.contains("void reset()"), "Should have reset handler");
+
+        // Should identify many variables
+        let var_count = pseudocode.lines()
+            .filter(|l| l.contains("//") && l.contains("$"))
+            .count();
+        println!("Variables declared: {}", var_count);
+        assert!(var_count > 50, "Should declare many variables");
+
+        println!("\n✅ End-to-end test passed");
+    } else {
+        println!("Skipping commercial ROM test (file not found)");
+    }
+}

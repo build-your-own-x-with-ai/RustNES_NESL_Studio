@@ -2,3 +2,4 @@
 
 pub mod decompile;
 pub mod disasm;
+pub mod pseudocode;

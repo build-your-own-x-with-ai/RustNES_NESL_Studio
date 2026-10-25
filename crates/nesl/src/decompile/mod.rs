@@ -9,6 +9,7 @@ pub mod advanced;  // Advanced decompiler for ROMs without debug symbols
 pub mod nesl_codegen;  // NESL code generator (experimental)
 pub mod control_flow;  // Control flow reconstruction
 pub mod mario;  // Super Mario Bros enhanced decompiler
+pub mod enhanced_pseudocode;  // Phase 2: Enhanced pseudocode with control flow
 
 use std::path::Path;
 use std::io;

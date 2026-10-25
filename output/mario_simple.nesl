@@ -1,0 +1,114 @@
+// ════════════════════════════════════════════════════════
+//   Super Mario Bros - Simple Working Demo
+// ════════════════════════════════════════════════════════
+
+// Palette
+const PAL: [u8] = [
+    0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,
+    0x0F, 0x16, 0x27, 0x30,  0x0F, 0x16, 0x27, 0x30,  0x0F, 0x16, 0x27, 0x30,  0x0F, 0x16, 0x27, 0x30,
+];
+
+// Mario tiles
+tile 1 = [
+    "......11",
+    "....1111",
+    "...11111",
+    "...11111",
+    "...33322",
+    "..322322",
+    "..322332",
+    ".3322332",
+];
+
+tile 2 = [
+    "111.....",
+    "112.....",
+    "122.....",
+    "111111..",
+    "3222....",
+    "332222..",
+    "2222222.",
+    "2232222.",
+];
+
+tile 3 = [
+    ".3322222",
+    ".3332222",
+    "...33222",
+    ".....333",
+    "....1111",
+    "...33331",
+    "..333333",
+    ".3333333",
+];
+
+tile 4 = [
+    "333333..",
+    "233333..",
+    "22222...",
+    "22......",
+    "331...2.",
+    "1331.222",
+    "11313222",
+    "11331222",
+];
+
+// Ground tile
+tile 5 = [
+    "11111111",
+    "12222221",
+    "12111121",
+    "12122121",
+    "12121121",
+    "12111121",
+    "12222221",
+    "11111111",
+];
+
+// Variables
+var player_x: u8 = 40;
+var player_y: u8 = 160;
+var player_vel_y: u8 = 0;
+var ground_y: u8 = 176;
+
+fn main() {
+    // Simple init
+    load_palette(PAL);
+    ppu_on();
+
+    // Main loop
+    loop {
+        wait_vblank();
+
+        // Input
+        let pad = joypad(0);
+        if pad & BTN_LEFT { if player_x > 0 { player_x -= 2; }}
+        if pad & BTN_RIGHT { if player_x < 240 { player_x += 2; }}
+        if pad & BTN_A {
+            if player_y >= ground_y {
+                player_vel_y = 12;
+            }
+        }
+
+        // Gravity
+        if player_y < ground_y {
+            if player_vel_y > 0 {
+                player_vel_y -= 1;
+            }
+            if player_vel_y > 0 {
+                if player_y > player_vel_y {
+                    player_y -= player_vel_y;
+                }
+            }
+        } else {
+            player_y = ground_y;
+            player_vel_y = 0;
+        }
+
+        // Draw Mario
+        sprite(0, player_x, player_y, 1, 1);
+        sprite(1, player_x + 8, player_y, 2, 1);
+        sprite(2, player_x, player_y + 8, 3, 1);
+        sprite(3, player_x + 8, player_y + 8, 4, 1);
+    }
+}

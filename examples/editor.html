@@ -507,11 +507,26 @@
                     const base64 = btoa(String.fromCharCode(...romBytes));
 
                     // Decompile to pseudocode
+                    showStatus('分析中（可能需要几秒钟）...', '');
                     const result = nesc_decompile(base64);
-                    const data = JSON.parse(result);
+
+                    // Parse JSON carefully (may be large)
+                    let data;
+                    try {
+                        data = JSON.parse(result);
+                    } catch (parseErr) {
+                        throw new Error('分析结果过大，JSON 解析失败: ' + parseErr.message);
+                    }
 
                     if (!data.ok) {
                         throw new Error(data.error);
+                    }
+
+                    // Check if pseudocode is too large
+                    const pseudocodeSize = data.pseudocode ? data.pseudocode.length : 0;
+                    if (pseudocodeSize > 500000) { // 500KB limit
+                        showStatus(`⚠️ ROM 过于复杂 (${Math.round(pseudocodeSize/1024)}KB)，只显示前 200KB`, 'warning');
+                        data.pseudocode = data.pseudocode.substring(0, 200000) + '\n\n// ... (输出过大，已截断)\n';
                     }
 
                     // This is pseudocode, not compilable NESL
@@ -530,7 +545,30 @@
 
                     showStatus('ROM 分析完成（伪代码）', 'success');
                 } catch (err) {
-                    showStatus('分析失败: ' + err.message, 'error');
+                    // Check for stack overflow
+                    if (err.message && err.message.includes('stack')) {
+                        showStatus('⚠️ ROM 过于复杂，分析失败。但已加载到模拟器，可以直接玩！', 'warning');
+                        // Still load to emulator even if analysis fails
+                        if (!nesEmulator) {
+                            loadEmulator(romBytes);
+                        }
+                        // Show simplified message
+                        document.getElementById('editor').value =
+                            `// ROM 分析失败: ${filename}\n` +
+                            `// 原因: ROM 过于复杂（函数数量太多）\n` +
+                            `//\n` +
+                            `// 但你仍然可以:\n` +
+                            `// 1. 点击右侧 '▶ 运行' 立即玩游戏\n` +
+                            `// 2. 使用命令行工具分析:\n` +
+                            `//    nesc pseudocode "${filename}" -o output.c\n` +
+                            `//\n` +
+                            `// 提示: 命令行工具没有栈限制，可以处理任何大小的 ROM\n`;
+                        currentROM = romBytes;
+                        isAnalysisMode = true;
+                        updateUIMode();
+                    } else {
+                        showStatus('分析失败: ' + err.message, 'error');
+                    }
                 }
             }, 100);
         }

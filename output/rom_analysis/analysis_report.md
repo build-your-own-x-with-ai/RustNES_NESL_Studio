@@ -70,4 +70,4 @@ nesc build mario.nesl -o mario_port.nes
 
 ---
 
-生成时间: 2026年10月25日 星期日 15时31分49秒 CST
+生成时间: 2026年10月25日 星期日 16时57分47秒 CST

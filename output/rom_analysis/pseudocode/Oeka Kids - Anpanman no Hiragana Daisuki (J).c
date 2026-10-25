@@ -3514,7 +3514,7 @@ void sub_FF3F() {  // $FF3F
     return;
 }
 
-void nmi() {  // $FFC8
+void irq() {  // $FFC8
     Y = var_80;
     Y++;
     if (!N) goto +-127;

@@ -181,3 +181,21 @@ fn escape_json(s: &str) -> String {
 fn json_error(msg: &str) -> String {
     format!("{{\"ok\":false,\"error\":\"{}\"}}", escape_json(msg))
 }
+
+/// Decompile a NES ROM with debug symbols back to NESL source code.
+///
+/// Input: ROM bytes as base64 string
+/// Output: JSON with structure:
+/// ```json
+/// {
+///   "ok": true,
+///   "code": "// NESL source code..."
+/// }
+/// ```
+/// or `{"ok": false, "error": "..."}` on failure
+#[wasm_bindgen]
+pub fn nesc_decompile_to_nesl(rom_base64: &str) -> String {
+    // Note: This function is for future use when we can decompile without filesystem access
+    // For now, return an error message
+    json_error("Decompiling ROM to NESL requires symbol files. Please upload a .nesl source file instead.")
+}

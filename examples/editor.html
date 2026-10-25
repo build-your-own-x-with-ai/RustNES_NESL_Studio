@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NES 游戏编辑器 - 端到端演示</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .header h1 {
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: rgba(255,255,255,0.3);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary {
+            background: #4CAF50;
+        }
+
+        .btn-primary:hover {
+            background: #45a049;
+        }
+
+        .main-container {
+            display: flex;
+            height: calc(100vh - 60px);
+        }
+
+        .sidebar {
+            width: 250px;
+            background: #252526;
+            border-right: 1px solid #3c3c3c;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 15px;
+            background: #2d2d30;
+            font-weight: 600;
+            border-bottom: 1px solid #3c3c3c;
+        }
+
+        .file-tree {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .file-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin-bottom: 2px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .file-item:hover {
+            background: #2a2d2e;
+        }
+
+        .file-item.active {
+            background: #37373d;
+        }
+
+        .editor-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #1e1e1e;
+        }
+
+        .editor-tabs {
+            display: flex;
+            background: #2d2d30;
+            border-bottom: 1px solid #3c3c3c;
+            overflow-x: auto;
+        }
+
+        .editor-tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-right: 1px solid #3c3c3c;
+            white-space: nowrap;
+        }
+
+        .editor-tab.active {
+            background: #1e1e1e;
+        }
+
+        .editor {
+            flex: 1;
+            padding: 20px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            overflow: auto;
+            resize: none;
+            border: none;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            outline: none;
+        }
+
+        .toolbar {
+            padding: 10px 20px;
+            background: #2d2d30;
+            border-top: 1px solid #3c3c3c;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .emulator-panel {
+            width: 600px;
+            background: #252526;
+            border-left: 1px solid #3c3c3c;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .emulator-header {
+            padding: 15px;
+            background: #2d2d30;
+            border-bottom: 1px solid #3c3c3c;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .emulator-viewport {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            position: relative;
+        }
+
+        .emulator-canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        .emulator-controls {
+            padding: 15px;
+            background: #2d2d30;
+            border-top: 1px solid #3c3c3c;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .control-btn {
+            background: #3c3c3c;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            font-size: 1em;
+        }
+
+        .control-btn:hover {
+            background: #4c4c4c;
+        }
+
+        .upload-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .upload-box {
+            background: #2d2d30;
+            border: 3px dashed #667eea;
+            border-radius: 12px;
+            padding: 60px;
+            text-align: center;
+            max-width: 500px;
+        }
+
+        .upload-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+        }
+
+        .upload-text {
+            font-size: 1.3em;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #888;
+            margin-bottom: 20px;
+        }
+
+        .upload-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .status-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #007acc;
+            color: white;
+            padding: 5px 20px;
+            font-size: 0.85em;
+            display: none;
+        }
+
+        .status-bar.error {
+            background: #d32f2f;
+        }
+
+        .status-bar.success {
+            background: #4CAF50;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+        }
+
+        .spinner {
+            border: 4px solid #3c3c3c;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Syntax highlighting */
+        .keyword { color: #569cd6; }
+        .type { color: #4ec9b0; }
+        .string { color: #ce9178; }
+        .number { color: #b5cea8; }
+        .comment { color: #6a9955; }
+        .function { color: #dcdcaa; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>
+            <span>🎮</span>
+            <span>NES 游戏编辑器</span>
+        </h1>
+        <div class="header-actions">
+            <button class="btn" onclick="loadExample()">📝 加载示例</button>
+            <button class="btn" onclick="uploadROM()">📁 上传 ROM</button>
+            <button class="btn btn-primary" onclick="compileAndRun()">▶ 编译运行</button>
+            <button class="btn" onclick="downloadROM()">💾 下载 ROM</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">项目文件</div>
+            <div class="file-tree" id="fileTree">
+                <div class="file-item active" onclick="selectFile('main')">
+                    📄 main.nesl
+                </div>
+            </div>
+        </div>
+
+        <!-- Editor -->
+        <div class="editor-container">
+            <div class="editor-tabs">
+                <div class="editor-tab active">main.nesl</div>
+            </div>
+            <textarea class="editor" id="editor" spellcheck="false">// 加载 ROM 或示例以开始编辑...</textarea>
+            <div class="toolbar">
+                <span id="statusText">就绪</span>
+                <span style="margin-left: auto;" id="cursorPos">行 1, 列 1</span>
+            </div>
+        </div>
+
+        <!-- Emulator Panel -->
+        <div class="emulator-panel">
+            <div class="emulator-header">
+                <span>🎮 NES 模拟器</span>
+                <span id="romName">无 ROM</span>
+            </div>
+            <div class="emulator-viewport" id="emulatorViewport">
+                <canvas class="emulator-canvas" id="nesCanvas" width="256" height="240"></canvas>
+            </div>
+            <div class="emulator-controls">
+                <button class="control-btn" onclick="emuPlay()">▶ 运行</button>
+                <button class="control-btn" onclick="emuPause()">⏸ 暂停</button>
+                <button class="control-btn" onclick="emuReset()">🔄 重置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Overlay -->
+    <div class="upload-overlay" id="uploadOverlay">
+        <div class="upload-box">
+            <div class="upload-icon">🎮</div>
+            <div class="upload-text">上传 NESL 源码或 NES ROM</div>
+            <div class="upload-hint">支持 .nesl 源码文件和 .nes ROM 文件</div>
+            <div class="upload-buttons">
+                <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">选择文件</button>
+                <button class="btn" onclick="loadExample()">加载示例</button>
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="fileInput" accept=".nesl,.nes" onchange="handleFileUpload(event)">
+
+    <div class="status-bar" id="statusBar"></div>
+
+    <script type="module">
+        import init, { nesc_compile, nesc_decompile } from '../crates/nesc-wasm/pkg/nesc_wasm.js';
+
+        let wasmReady = false;
+        let currentCode = '';
+        let currentROM = null;
+
+        // Initialize WASM
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                await init();
+                wasmReady = true;
+                console.log('✅ WASM loaded');
+            } catch (err) {
+                console.error('❌ WASM load failed:', err);
+                showStatus('WASM 加载失败: ' + err, 'error');
+            }
+        });
+
+        // Load example
+        window.loadExample = async function() {
+            if (!wasmReady) {
+                showStatus('WASM 尚未加载完成', 'error');
+                return;
+            }
+
+            // Load sprite.nesl source code
+            try {
+                const response = await fetch('../examples/sprite.nesl');
+                const code = await response.text();
+
+                document.getElementById('uploadOverlay').classList.add('hidden');
+                document.getElementById('editor').value = code;
+                document.getElementById('romName').textContent = 'sprite.nesl';
+                currentCode = code;
+
+                showStatus('示例已加载', 'success');
+            } catch (err) {
+                showStatus('加载示例失败: ' + err, 'error');
+            }
+        };
+
+        // Upload ROM
+        window.uploadROM = function() {
+            document.getElementById('fileInput').click();
+        };
+
+        window.handleFileUpload = function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Check file type
+            if (file.name.endsWith('.nesl')) {
+                // Load NESL source code
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const code = e.target.result;
+                    document.getElementById('uploadOverlay').classList.add('hidden');
+                    document.getElementById('editor').value = code;
+                    document.getElementById('romName').textContent = file.name;
+                    currentCode = code;
+                    showStatus('NESL 源码已加载', 'success');
+                };
+                reader.readAsText(file);
+            } else if (file.name.endsWith('.nes')) {
+                // Load ROM and try to decompile
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const bytes = new Uint8Array(e.target.result);
+                    document.getElementById('uploadOverlay').classList.add('hidden');
+                    processROM(bytes, file.name);
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                showStatus('不支持的文件格式', 'error');
+            }
+        };
+
+        function processROM(romBytes, filename) {
+            showStatus('正在反编译...', '');
+
+            setTimeout(() => {
+                try {
+                    // Convert to base64
+                    const base64 = btoa(String.fromCharCode(...romBytes));
+
+                    // Decompile
+                    const result = nesc_decompile(base64);
+                    const data = JSON.parse(result);
+
+                    if (!data.ok) {
+                        throw new Error(data.error);
+                    }
+
+                    // Extract NESL code from pseudocode (simplified)
+                    currentCode = data.pseudocode;
+                    document.getElementById('editor').value = currentCode;
+                    document.getElementById('romName').textContent = filename;
+
+                    currentROM = romBytes;
+
+                    showStatus('反编译完成', 'success');
+                } catch (err) {
+                    showStatus('反编译失败: ' + err.message, 'error');
+                }
+            }, 100);
+        }
+
+        // Compile and run
+        window.compileAndRun = function() {
+            if (!wasmReady) {
+                showStatus('WASM 尚未加载完成', 'error');
+                return;
+            }
+
+            const code = document.getElementById('editor').value;
+            showStatus('正在编译...', '');
+
+            setTimeout(() => {
+                try {
+                    const result = nesc_compile(code);
+                    const data = JSON.parse(result);
+
+                    if (!data.ok) {
+                        const errors = data.errors.map(e => `${e.line}:${e.col} ${e.message}`).join('\\n');
+                        showStatus('编译失败:\\n' + errors, 'error');
+                        return;
+                    }
+
+                    // Decode ROM
+                    const romBase64 = data.rom;
+                    const romBinary = atob(romBase64);
+                    const romBytes = new Uint8Array(romBinary.length);
+                    for (let i = 0; i < romBinary.length; i++) {
+                        romBytes[i] = romBinary.charCodeAt(i);
+                    }
+
+                    currentROM = romBytes;
+                    showStatus(`编译成功！PRG: ${data.prg_used} bytes`, 'success');
+
+                    // Load into emulator (stub for now)
+                    loadEmulator(romBytes);
+
+                } catch (err) {
+                    showStatus('编译失败: ' + err.message, 'error');
+                }
+            }, 100);
+        };
+
+        // Download ROM
+        window.downloadROM = function() {
+            if (!currentROM) {
+                showStatus('没有可下载的 ROM', 'error');
+                return;
+            }
+
+            const blob = new Blob([currentROM], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'modified.nes';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            showStatus('ROM 已下载', 'success');
+        };
+
+        // Emulator stubs
+        function loadEmulator(romBytes) {
+            const canvas = document.getElementById('nesCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // Draw placeholder
+            ctx.fillStyle = '#333';
+            ctx.fillRect(0, 0, 256, 240);
+            ctx.fillStyle = '#667eea';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('ROM 已加载', 128, 100);
+            ctx.fillText('模拟器集成中...', 128, 130);
+            ctx.fillText('(使用外部模拟器测试)', 128, 160);
+        }
+
+        window.emuPlay = function() {
+            showStatus('模拟器功能开发中', '');
+        };
+
+        window.emuPause = function() {
+            showStatus('模拟器功能开发中', '');
+        };
+
+        window.emuReset = function() {
+            showStatus('模拟器功能开发中', '');
+        };
+
+        // UI helpers
+        function showStatus(message, type) {
+            const statusBar = document.getElementById('statusBar');
+            const statusText = document.getElementById('statusText');
+
+            statusText.textContent = message;
+            statusBar.className = 'status-bar ' + type;
+            statusBar.style.display = 'block';
+
+            if (type === 'success' || type === 'error') {
+                setTimeout(() => {
+                    statusBar.style.display = 'none';
+                }, 3000);
+            }
+        }
+
+        // Editor cursor position
+        document.getElementById('editor').addEventListener('input', function(e) {
+            const lines = e.target.value.split('\\n');
+            const pos = e.target.selectionStart;
+            let line = 1, col = 1;
+            let chars = 0;
+
+            for (let i = 0; i < lines.length; i++) {
+                if (chars + lines[i].length >= pos) {
+                    line = i + 1;
+                    col = pos - chars + 1;
+                    break;
+                }
+                chars += lines[i].length + 1; // +1 for newline
+            }
+
+            document.getElementById('cursorPos').textContent = `行 ${line}, 列 ${col}`;
+        });
+
+        window.selectFile = function(filename) {
+            // File tree selection (stub)
+        };
+    </script>
+</body>
+</html>

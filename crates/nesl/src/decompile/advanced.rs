@@ -7,7 +7,7 @@
 //! - Pseudo-code generation
 
 use crate::disasm::{Disassembler, Instruction, AddressingMode};
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 
 /// Memory access record
 #[derive(Debug, Clone)]
@@ -272,5 +272,221 @@ fn generate_variable_name(addr: u8, pattern: &AccessPattern, var_type: &VarType)
 
         // Default
         _ => format!("var_{:02X}", addr),
+    }
+}
+
+// ============================================================================
+// Phase 2: Function Identification
+// ============================================================================
+
+/// Inferred function information
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub entry: u16,
+    pub name: String,
+    pub exit_points: Vec<u16>,    // RTS/RTI locations
+    pub calls_to: Vec<u16>,        // Functions this calls
+    pub called_from: Vec<u16>,     // Where this is called from
+    pub size_bytes: usize,         // Approximate size
+}
+
+/// Scan PRG-ROM for function calls (JSR instructions)
+pub fn scan_function_calls(prg_rom: &[u8]) -> HashMap<u16, Vec<u16>> {
+    let mut calls: HashMap<u16, Vec<u16>> = HashMap::new();  // callee -> [callers]
+    let mut disasm = Disassembler::new(prg_rom);
+    let cpu_base = 0x8000u16;
+
+    let mut pc = 0;
+    while pc < prg_rom.len().min(32768) {
+        let Some((instr, size)) = disasm.decode_at(pc) else {
+            pc += 1;
+            continue;
+        };
+
+        if let Instruction::JSR(target) = instr {
+            let caller = cpu_base.wrapping_add(pc as u16);
+            calls.entry(target).or_default().push(caller);
+        }
+
+        pc += size;
+    }
+
+    calls
+}
+
+/// Identify interrupt vector functions (NMI, RESET, IRQ)
+pub fn identify_interrupt_handlers(prg_rom: &[u8]) -> HashMap<String, u16> {
+    let mut handlers = HashMap::new();
+
+    // Interrupt vectors are at the last 6 bytes of PRG-ROM
+    if prg_rom.len() >= 6 {
+        let vectors_offset = prg_rom.len() - 6;
+
+        let nmi = u16::from_le_bytes([
+            prg_rom[vectors_offset],
+            prg_rom[vectors_offset + 1]
+        ]);
+        let reset = u16::from_le_bytes([
+            prg_rom[vectors_offset + 2],
+            prg_rom[vectors_offset + 3]
+        ]);
+        let irq = u16::from_le_bytes([
+            prg_rom[vectors_offset + 4],
+            prg_rom[vectors_offset + 5]
+        ]);
+
+        handlers.insert("nmi".to_string(), nmi);
+        handlers.insert("reset".to_string(), reset);
+        handlers.insert("irq".to_string(), irq);
+    }
+
+    handlers
+}
+
+/// Find function exit points (RTS/RTI) starting from entry address
+pub fn find_function_exits(entry: u16, prg_rom: &[u8], max_size: usize) -> Vec<u16> {
+    let cpu_base = 0x8000u16;
+    let offset = entry.wrapping_sub(cpu_base) as usize;
+
+    if offset >= prg_rom.len() {
+        return Vec::new();
+    }
+
+    let mut exits = Vec::new();
+    let mut disasm = Disassembler::new(prg_rom);
+    let mut pc = offset;
+
+    // Scan forward for RTS/RTI, stop after max_size bytes or hitting one
+    for _ in 0..max_size {
+        if pc >= prg_rom.len() {
+            break;
+        }
+
+        let Some((instr, size)) = disasm.decode_at(pc) else {
+            pc += 1;
+            continue;
+        };
+
+        match instr {
+            Instruction::RTS | Instruction::RTI => {
+                exits.push(cpu_base.wrapping_add(pc as u16));
+                break;  // Stop at first exit for simple analysis
+            }
+            Instruction::JMP(_) => {
+                // Tail call or jump table, stop here
+                break;
+            }
+            _ => {}
+        }
+
+        pc += size;
+    }
+
+    exits
+}
+
+/// Infer all functions from call graph and interrupt vectors
+pub fn infer_functions(prg_rom: &[u8]) -> BTreeMap<u16, Function> {
+    let mut functions = BTreeMap::new();
+    let calls = scan_function_calls(prg_rom);
+    let handlers = identify_interrupt_handlers(prg_rom);
+
+    // Add interrupt handlers first
+    for (handler_name, entry) in &handlers {
+        if *entry >= 0x8000 {  // Valid ROM address
+            let exits = find_function_exits(*entry, prg_rom, 1000);
+            let size_bytes = if let Some(first_exit) = exits.first() {
+                first_exit.wrapping_sub(*entry) as usize
+            } else {
+                256  // Default estimate
+            };
+
+            functions.insert(*entry, Function {
+                entry: *entry,
+                name: handler_name.clone(),
+                exit_points: exits,
+                calls_to: Vec::new(),
+                called_from: Vec::new(),
+                size_bytes,
+            });
+        }
+    }
+
+    // Add all called functions
+    for (callee, callers) in &calls {
+        if *callee < 0x8000 {
+            continue;  // Skip non-ROM addresses
+        }
+
+        let name = generate_function_name(*callee, &handlers);
+        let exits = find_function_exits(*callee, prg_rom, 1000);
+        let size_bytes = if let Some(first_exit) = exits.first() {
+            first_exit.wrapping_sub(*callee) as usize
+        } else {
+            256
+        };
+
+        functions.entry(*callee).or_insert_with(|| Function {
+            entry: *callee,
+            name,
+            exit_points: exits,
+            calls_to: Vec::new(),
+            called_from: callers.clone(),
+            size_bytes,
+        });
+    }
+
+    // Build call graph (what each function calls)
+    for func in functions.values_mut() {
+        let offset = func.entry.wrapping_sub(0x8000) as usize;
+        if offset >= prg_rom.len() {
+            continue;
+        }
+
+        let mut disasm = Disassembler::new(prg_rom);
+        let mut pc = offset;
+
+        // Scan function body for JSR calls
+        for _ in 0..func.size_bytes {
+            if pc >= prg_rom.len() {
+                break;
+            }
+
+            let Some((instr, size)) = disasm.decode_at(pc) else {
+                pc += 1;
+                continue;
+            };
+
+            if let Instruction::JSR(target) = instr {
+                if target >= 0x8000 {
+                    func.calls_to.push(target);
+                }
+            }
+
+            if matches!(instr, Instruction::RTS | Instruction::RTI) {
+                break;
+            }
+
+            pc += size;
+        }
+    }
+
+    functions
+}
+
+/// Generate a meaningful function name
+fn generate_function_name(addr: u16, handlers: &HashMap<String, u16>) -> String {
+    // Check if it's an interrupt handler
+    for (name, &handler_addr) in handlers {
+        if addr == handler_addr {
+            return name.clone();
+        }
+    }
+
+    // Check for common library function patterns
+    // (This is heuristic-based and may not always be accurate)
+    match addr {
+        0x8000..=0x8010 => format!("init_{:04X}", addr),
+        _ => format!("sub_{:04X}", addr),
     }
 }

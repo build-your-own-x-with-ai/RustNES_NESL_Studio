@@ -65,7 +65,7 @@ impl RomImage {
     }
 }
 
-fn operand_len(mode: Mode) -> usize {
+pub(crate) fn operand_len(mode: Mode) -> usize {
     match mode {
         Mode::Imp | Mode::Acc => 0,
         Mode::Abs | Mode::AbsX | Mode::AbsY | Mode::Ind => 2,
@@ -73,14 +73,16 @@ fn operand_len(mode: Mode) -> usize {
     }
 }
 
-/// 追踪结果：已识别指令、标签、`.word` 数据位置。
-struct Trace {
+/// 追踪结果：已识别指令、标签、`.word` 数据位置、跳转表。
+pub(crate) struct Trace {
     /// PRG 偏移 → (指令, 寻址模式, 操作数)。Rel 的操作数存目标地址。
-    instrs: BTreeMap<usize, (Op, Mode, u16)>,
+    pub(crate) instrs: BTreeMap<usize, (Op, Mode, u16)>,
     /// CPU 地址 → 标签名。
-    labels: BTreeMap<u16, String>,
+    pub(crate) labels: BTreeMap<u16, String>,
     /// 以 `.word` 发射的 PRG 偏移（跳转表项、中断向量）。
-    words: BTreeSet<usize>,
+    pub(crate) words: BTreeSet<usize>,
+    /// JumpEngine 调用点（JSR 指令的 PRG 偏移）→ 按序表项（CPU 地址）。
+    pub(crate) jump_tables: BTreeMap<usize, Vec<u16>>,
 }
 
 impl Trace {
@@ -103,8 +105,9 @@ fn is_jump_engine(prg: &[u8], off: usize) -> bool {
         && prg[off + 6] == 0x85
 }
 
-/// 追踪式反汇编：返回可重新汇编的 .asm 文本（含 .ines 头部指令）。
-pub fn disassemble(rom: &RomImage) -> Result<String, String> {
+/// 控制流追踪：从中断向量出发识别指令/标签/跳转表。
+/// 返回 (追踪结果, PRG 基址)。
+pub(crate) fn trace_rom(rom: &RomImage) -> Result<(Trace, u16), String> {
     let prg = &rom.prg;
     if prg.len() < 6 || prg.len() % 0x4000 != 0 {
         return Err(format!("PRG 大小异常：{} 字节", prg.len()));
@@ -117,7 +120,12 @@ pub fn disassemble(rom: &RomImage) -> Result<String, String> {
     let reset = le16(prg.len() - 4);
     let irq = le16(prg.len() - 2);
 
-    let mut t = Trace { instrs: BTreeMap::new(), labels: BTreeMap::new(), words: BTreeSet::new() };
+    let mut t = Trace {
+        instrs: BTreeMap::new(),
+        labels: BTreeMap::new(),
+        words: BTreeSet::new(),
+        jump_tables: BTreeMap::new(),
+    };
     for (addr, name) in [(reset, "Reset"), (nmi, "NMI"), (irq, "IRQ")] {
         if addr >= base {
             t.labels.entry(addr).or_insert_with(|| name.to_string());
@@ -175,6 +183,7 @@ pub fn disassemble(rom: &RomImage) -> Result<String, String> {
                         // JSR JumpEngine 后紧跟地址表：逐字收录为代码入口，
                         // 遇到越界值 / 已追踪代码 / 已有标签（即表后第一个例程）为止。
                         let mut p = pc + len;
+                        let mut entries = Vec::new();
                         while p + 2 <= prg.len()
                             && !t.instrs.contains_key(&p)
                             && !t.labels.contains_key(&base.wrapping_add(p as u16))
@@ -186,8 +195,10 @@ pub fn disassemble(rom: &RomImage) -> Result<String, String> {
                             t.words.insert(p);
                             t.add_label(w, base, prg.len());
                             worklist.push(w);
+                            entries.push(w);
                             p += 2;
                         }
+                        t.jump_tables.insert(pc, entries);
                         break;
                     }
                     pc += len;
@@ -202,6 +213,14 @@ pub fn disassemble(rom: &RomImage) -> Result<String, String> {
             }
         }
     }
+    Ok((t, base))
+}
+
+/// 追踪式反汇编：返回可重新汇编的 .asm 文本（含 .ines 头部指令）。
+pub fn disassemble(rom: &RomImage) -> Result<String, String> {
+    let (t, base) = trace_rom(rom)?;
+    let prg = &rom.prg;
+    let le16 = |o: usize| u16::from_le_bytes([prg[o], prg[o + 1]]);
 
     // ---- 发射：按地址线性扫描，每个字节恰好输出一次 ----
     let mut out = String::new();

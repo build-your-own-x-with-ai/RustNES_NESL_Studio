@@ -50,6 +50,29 @@ pub fn disasm_full(input: &Path, output: Option<&Path>) -> Result<(), String> {
     }
 }
 
+/// `nesc decompile-c <rom.nes> [-o <out.c>]`：静态重编译为自包含 C 源码（Feature 020）。
+pub fn decompile_c(input: &Path, output: Option<&Path>) -> Result<(), String> {
+    let rom_bytes =
+        std::fs::read(input).map_err(|e| format!("无法读取 {}: {e}", input.display()))?;
+    let img = nesl::disasm::roundtrip::parse_ines(&rom_bytes)?;
+    let c = nesl::decompile::c_codegen::generate_c(&img)?;
+    let out = output
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| input.with_extension("c"));
+    std::fs::write(&out, &c).map_err(|e| format!("无法写入 {}: {e}", out.display()))?;
+    let funcs = c.lines().filter(|l| l.starts_with("static void sub_") && l.contains('{')).count();
+    let switches = c.matches("switch (cpu_a)").count();
+    println!(
+        "已写入 {}（{} 行，{} 个函数，{} 个跳转表 switch）",
+        out.display(),
+        c.lines().count(),
+        funcs,
+        switches
+    );
+    println!("编译：cc -O1 -o smb {}；运行：./smb <script.txt>（btn/dump/end）", out.display());
+    Ok(())
+}
+
 /// `nesc asm <in.asm> [-o <out.nes>]`：从往返源码重建 ROM。
 pub fn assemble(input: &Path, output: Option<&Path>) -> Result<(), String> {
     let src =

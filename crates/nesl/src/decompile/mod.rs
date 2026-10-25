@@ -20,6 +20,7 @@ pub mod data_analysis;  // Phase 6: Data segment analysis
 pub mod chr_integration;  // Phase 7: CHR ROM integration
 pub mod complete_generator;  // Phase 8: Complete code generation
 pub mod ultimate;  // Ultimate: Fully runnable with all resources
+pub mod c_codegen;  // Feature 020: C 静态重编译（帧级一致可验证）
 
 use std::path::Path;
 use std::io;

@@ -522,6 +522,9 @@
                     currentROM = romBytes;
                     isAnalysisMode = true;
 
+                    // Load ROM into emulator so user can play it! 🎮
+                    loadEmulator(romBytes);
+
                     // Disable compile button in analysis mode
                     updateUIMode();
 

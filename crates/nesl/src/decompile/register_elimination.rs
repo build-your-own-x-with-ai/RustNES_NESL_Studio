@@ -149,7 +149,7 @@ pub enum Statement {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Variable {
     Temp(usize),      // Temporary (register)
     ZeroPage(u8),     // Zero-page variable

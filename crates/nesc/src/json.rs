@@ -16,6 +16,7 @@ pub const EXAMPLES: &[(&str, &str)] = &[
     ("runner", include_str!("../../../examples/runner.nesl")),
     ("quest", include_str!("../../../examples/quest.nesl")),
     ("split", include_str!("../../../examples/split.nesl")),
+    ("mario", include_str!("../../../output/decompiled/super_mario_bros.nesl")),
 ];
 
 /// `{"ok":true,"rom":"..","prg_used":N,"asm":".."}` or `{"ok":false,"errors":[..]}`.

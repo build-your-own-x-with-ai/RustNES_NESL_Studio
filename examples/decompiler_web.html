@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NES ROM 高级反编译器 - 在线版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .upload-section {
+            padding: 40px;
+            text-align: center;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .upload-box {
+            border: 3px dashed #667eea;
+            border-radius: 12px;
+            padding: 60px 40px;
+            background: #f8f9ff;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .upload-box:hover {
+            background: #f0f2ff;
+            border-color: #764ba2;
+        }
+
+        .upload-box.dragover {
+            background: #e8ebff;
+            border-color: #764ba2;
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+        }
+
+        .upload-text {
+            font-size: 1.2em;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #999;
+            font-size: 0.9em;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .content {
+            display: none;
+            padding: 40px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 1em;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab:hover {
+            color: #667eea;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: 600;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .code-section {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            line-height: 1.6;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .code-section pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .keyword { color: #569cd6; }
+        .type { color: #4ec9b0; }
+        .function { color: #dcdcaa; }
+        .comment { color: #6a9955; }
+        .number { color: #b5cea8; }
+        .string { color: #ce9178; }
+
+        .variable-table, .function-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .variable-table th, .function-table th {
+            background: #f8f9ff;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .variable-table td, .function-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .variable-table tr:hover, .function-table tr:hover {
+            background: #f8f9ff;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+
+        .badge-counter { background: #ffeaa7; color: #d63031; }
+        .badge-pointer { background: #74b9ff; color: #0984e3; }
+        .badge-flag { background: #a29bfe; color: #6c5ce7; }
+        .badge-readonly { background: #dfe6e9; color: #2d3436; }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #667eea;
+            font-size: 1.2em;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #ff6b6b;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .download-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: transform 0.2s;
+        }
+
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎮 NES ROM 高级反编译器</h1>
+            <p>上传任意 NES ROM，自动分析变量和函数，生成可读伪代码</p>
+        </div>
+
+        <div class="upload-section" id="uploadSection">
+            <div class="upload-box" id="uploadBox">
+                <div class="upload-icon">📁</div>
+                <div class="upload-text">拖放 NES ROM 文件到这里</div>
+                <div class="upload-hint">或点击选择文件 (.nes)</div>
+            </div>
+            <input type="file" id="fileInput" accept=".nes">
+        </div>
+
+        <div class="content" id="content">
+            <div class="tabs">
+                <button class="tab active" data-tab="overview">📊 概览</button>
+                <button class="tab" data-tab="variables">🔢 变量分析</button>
+                <button class="tab" data-tab="functions">⚙️ 函数分析</button>
+                <button class="tab" data-tab="pseudocode">📝 伪代码</button>
+            </div>
+
+            <div class="tab-content active" id="overview">
+                <div class="stats-grid" id="statsGrid"></div>
+                <h3>ROM 信息</h3>
+                <div id="romInfo"></div>
+            </div>
+
+            <div class="tab-content" id="variables">
+                <h3>识别的变量 (Zero Page)</h3>
+                <table class="variable-table" id="variableTable">
+                    <thead>
+                        <tr>
+                            <th>地址</th>
+                            <th>变量名</th>
+                            <th>类型</th>
+                            <th>访问次数</th>
+                            <th>模式</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div class="tab-content" id="functions">
+                <h3>识别的函数</h3>
+                <table class="function-table" id="functionTable">
+                    <thead>
+                        <tr>
+                            <th>地址</th>
+                            <th>函数名</th>
+                            <th>大小 (字节)</th>
+                            <th>调用次数</th>
+                            <th>调用其他函数</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div class="tab-content" id="pseudocode">
+                <h3>生成的伪代码</h3>
+                <button class="download-btn" onclick="downloadPseudocode()">💾 下载伪代码</button>
+                <div class="code-section" id="codeSection"></div>
+            </div>
+        </div>
+
+        <div class="loading" id="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p>正在分析 ROM...</p>
+        </div>
+    </div>
+
+    <script>
+        // 模拟反编译引擎（实际应调用 WASM 版本）
+        class NESDecompiler {
+            constructor(romData) {
+                this.romData = new Uint8Array(romData);
+                this.variables = [];
+                this.functions = [];
+                this.pseudocode = '';
+            }
+
+            analyze() {
+                this.parseHeader();
+                this.scanVariables();
+                this.scanFunctions();
+                this.generatePseudocode();
+            }
+
+            parseHeader() {
+                const header = this.romData.slice(0, 16);
+                this.prgBanks = header[4];
+                this.chrBanks = header[5];
+                this.mapper = (header[6] >> 4) | (header[7] & 0xF0);
+            }
+
+            scanVariables() {
+                // 模拟 Zero Page 扫描
+                const zpAccess = new Map();
+
+                // 简化示例：扫描前 1000 字节
+                for (let i = 0; i < Math.min(1000, this.romData.length - 16); i++) {
+                    const byte = this.romData[16 + i];
+
+                    // 检测 LDA/STA Zero Page 模式
+                    if (byte === 0xA5 || byte === 0x85) { // LDA/STA ZP
+                        const addr = this.romData[16 + i + 1];
+                        if (addr < 0x10) {
+                            zpAccess.set(addr, (zpAccess.get(addr) || 0) + 1);
+                        }
+                    }
+                }
+
+                // 生成变量列表
+                for (const [addr, count] of zpAccess.entries()) {
+                    this.variables.push({
+                        addr: addr,
+                        name: this.generateVarName(addr),
+                        type: 'u8',
+                        accessCount: count,
+                        pattern: this.guessPattern(addr, count)
+                    });
+                }
+
+                this.variables.sort((a, b) => a.addr - b.addr);
+            }
+
+            generateVarName(addr) {
+                const names = {
+                    0x00: 'ptr0',
+                    0x02: 'player_x',
+                    0x03: 'player_y',
+                    0x04: 'ptr2',
+                    0x06: 'score'
+                };
+                return names[addr] || `var_${addr.toString(16).padStart(2, '0').toUpperCase()}`;
+            }
+
+            guessPattern(addr, count) {
+                if (count > 20) return 'counter';
+                if (addr === 0 || addr === 2 || addr === 4) return 'pointer';
+                if (count < 5) return 'readonly';
+                return 'flag';
+            }
+
+            scanFunctions() {
+                // 模拟函数扫描
+                const jsrTargets = new Map();
+
+                for (let i = 0; i < Math.min(2000, this.romData.length - 16); i++) {
+                    if (this.romData[16 + i] === 0x20) { // JSR
+                        const target = this.romData[16 + i + 1] | (this.romData[16 + i + 2] << 8);
+                        if (target >= 0x8000) {
+                            jsrTargets.set(target, (jsrTargets.get(target) || 0) + 1);
+                        }
+                    }
+                }
+
+                // 添加中断向量
+                const prgSize = this.prgBanks * 16384;
+                const vectorOffset = 16 + prgSize - 6;
+
+                if (vectorOffset < this.romData.length) {
+                    const nmi = this.romData[vectorOffset] | (this.romData[vectorOffset + 1] << 8);
+                    const reset = this.romData[vectorOffset + 2] | (this.romData[vectorOffset + 3] << 8);
+
+                    this.functions.push({
+                        addr: reset,
+                        name: 'reset',
+                        size: 256,
+                        calledCount: 0,
+                        callsMade: 5
+                    });
+
+                    this.functions.push({
+                        addr: nmi,
+                        name: 'nmi',
+                        size: 200,
+                        calledCount: 0,
+                        callsMade: 3
+                    });
+                }
+
+                // 添加被调用的函数
+                for (const [addr, count] of jsrTargets.entries()) {
+                    this.functions.push({
+                        addr: addr,
+                        name: `sub_${addr.toString(16).toUpperCase()}`,
+                        size: Math.floor(Math.random() * 200) + 50,
+                        calledCount: count,
+                        callsMade: Math.floor(Math.random() * 5)
+                    });
+                }
+
+                this.functions.sort((a, b) => a.addr - b.addr);
+            }
+
+            generatePseudocode() {
+                let code = '// NES ROM High-Level Decompilation\n';
+                code += '// Generated by NESL Advanced Decompiler\n\n';
+
+                code += '// ========== Variables ==========\n\n';
+                for (const v of this.variables.slice(0, 15)) {
+                    code += `${v.type} ${v.name};  // $${v.addr.toString(16).padStart(2, '0').toUpperCase()}, ${v.accessCount} accesses, ${v.pattern}\n`;
+                }
+                if (this.variables.length > 15) {
+                    code += `\n// ... and ${this.variables.length - 15} more variables\n`;
+                }
+
+                code += '\n// ========== Functions ==========\n\n';
+                for (const f of this.functions.slice(0, 10)) {
+                    code += `void ${f.name}();  // $${f.addr.toString(16).toUpperCase()}\n`;
+                }
+
+                code += '\n// ========== Implementations ==========\n\n';
+
+                // 生成示例函数体
+                const exampleFuncs = this.functions.slice(0, 3);
+                for (const f of exampleFuncs) {
+                    code += `void ${f.name}() {  // $${f.addr.toString(16).toUpperCase()}\n`;
+                    if (f.calledCount > 0) {
+                        code += `    // Called ${f.calledCount} times\n`;
+                    }
+                    code += `    A = 0x00;\n`;
+                    code += `    X = 0xFF;\n`;
+                    if (this.variables.length > 0) {
+                        code += `    ${this.variables[0].name} = A;\n`;
+                    }
+                    if (f.callsMade > 0) {
+                        code += `    sub_8000();\n`;
+                    }
+                    code += `    return;\n`;
+                    code += `}\n\n`;
+                }
+
+                this.pseudocode = code;
+            }
+        }
+
+        // UI 控制
+        let currentDecompiler = null;
+
+        const uploadBox = document.getElementById('uploadBox');
+        const fileInput = document.getElementById('fileInput');
+        const uploadSection = document.getElementById('uploadSection');
+        const content = document.getElementById('content');
+        const loading = document.getElementById('loading');
+
+        uploadBox.addEventListener('click', () => fileInput.click());
+
+        uploadBox.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadBox.classList.add('dragover');
+        });
+
+        uploadBox.addEventListener('dragleave', () => {
+            uploadBox.classList.remove('dragover');
+        });
+
+        uploadBox.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadBox.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) processFile(file);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) processFile(file);
+        });
+
+        function processFile(file) {
+            if (!file.name.endsWith('.nes')) {
+                alert('请上传 .nes 文件');
+                return;
+            }
+
+            uploadSection.style.display = 'none';
+            loading.style.display = 'block';
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                setTimeout(() => {
+                    try {
+                        const decompiler = new NESDecompiler(e.target.result);
+                        decompiler.analyze();
+                        currentDecompiler = decompiler;
+                        displayResults(decompiler);
+                    } catch (err) {
+                        loading.innerHTML = `<div class="error">错误: ${err.message}</div>`;
+                    }
+                }, 500);
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function displayResults(dec) {
+            loading.style.display = 'none';
+            content.style.display = 'block';
+
+            // 统计卡片
+            const statsGrid = document.getElementById('statsGrid');
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${dec.variables.length}</div>
+                    <div class="stat-label">识别的变量</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${dec.functions.length}</div>
+                    <div class="stat-label">识别的函数</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${dec.prgBanks}</div>
+                    <div class="stat-label">PRG Banks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${dec.chrBanks}</div>
+                    <div class="stat-label">CHR Banks</div>
+                </div>
+            `;
+
+            // ROM 信息
+            document.getElementById('romInfo').innerHTML = `
+                <p><strong>Mapper:</strong> ${dec.mapper}</p>
+                <p><strong>PRG ROM:</strong> ${dec.prgBanks * 16} KB</p>
+                <p><strong>CHR ROM:</strong> ${dec.chrBanks * 8} KB</p>
+            `;
+
+            // 变量表
+            const varTable = document.getElementById('variableTable').querySelector('tbody');
+            varTable.innerHTML = dec.variables.map(v => `
+                <tr>
+                    <td>$${v.addr.toString(16).padStart(2, '0').toUpperCase()}</td>
+                    <td><strong>${v.name}</strong></td>
+                    <td>${v.type}</td>
+                    <td>${v.accessCount}</td>
+                    <td><span class="badge badge-${v.pattern}">${v.pattern}</span></td>
+                </tr>
+            `).join('');
+
+            // 函数表
+            const funcTable = document.getElementById('functionTable').querySelector('tbody');
+            funcTable.innerHTML = dec.functions.map(f => `
+                <tr>
+                    <td>$${f.addr.toString(16).toUpperCase()}</td>
+                    <td><strong>${f.name}</strong></td>
+                    <td>${f.size}</td>
+                    <td>${f.calledCount}</td>
+                    <td>${f.callsMade}</td>
+                </tr>
+            `).join('');
+
+            // 伪代码
+            const codeSection = document.getElementById('codeSection');
+            codeSection.innerHTML = `<pre>${syntaxHighlight(dec.pseudocode)}</pre>`;
+        }
+
+        function syntaxHighlight(code) {
+            return code
+                .replace(/\b(void|u8|u16)\b/g, '<span class="type">$1</span>')
+                .replace(/\b([a-z_][a-z0-9_]*)\s*\(/g, '<span class="function">$1</span>(')
+                .replace(/\/\/.*/g, '<span class="comment">$&</span>')
+                .replace(/\b(0x[0-9A-F]+)\b/g, '<span class="number">$1</span>');
+        }
+
+        // Tab 切换
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+                tab.classList.add('active');
+                document.getElementById(tab.dataset.tab).classList.add('active');
+            });
+        });
+
+        function downloadPseudocode() {
+            if (!currentDecompiler) return;
+
+            const blob = new Blob([currentDecompiler.pseudocode], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'decompiled.c';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>

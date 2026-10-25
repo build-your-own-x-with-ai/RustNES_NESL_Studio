@@ -5,6 +5,7 @@ pub mod symbol_loader;
 pub mod ast_builder;
 pub mod codegen;
 pub mod chr_decode;
+pub mod advanced;  // Advanced decompiler for ROMs without debug symbols
 
 use std::path::Path;
 use std::io;

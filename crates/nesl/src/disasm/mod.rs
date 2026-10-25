@@ -2,6 +2,9 @@
 //!
 //! 将 6502 机器码转换为汇编指令，用于真正的 NES ROM 反编译。
 
+pub mod asm_text;
+pub mod roundtrip;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressingMode {
     Implied,        // INX

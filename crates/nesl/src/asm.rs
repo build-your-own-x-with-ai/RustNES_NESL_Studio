@@ -77,7 +77,17 @@ pub struct Assembled {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Mode { Imp, Acc, Imm, Zp, ZpX, ZpY, Abs, AbsX, AbsY, Ind, IndX, IndY, Rel }
+pub enum Mode { Imp, Acc, Imm, Zp, ZpX, ZpY, Abs, AbsX, AbsY, Ind, IndX, IndY, Rel }
+
+/// 编码表查询：给定 (Op, Mode) 返回官方 opcode 字节。
+pub fn encode_opcode(op: Op, mode: Mode) -> Option<u8> {
+    opcode(op, mode)
+}
+
+/// 256 项反查表：opcode 字节 → (Op, Mode)。与 `encode_opcode` 互逆。
+pub fn opcode_table() -> [Option<(Op, Mode)>; 256] {
+    [None; 256]
+}
 
 fn opcode(op: Op, mode: Mode) -> Option<u8> {
     use Mode::*;

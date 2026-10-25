@@ -345,8 +345,18 @@ pub fn identify_interrupt_handlers(prg_rom: &[u8]) -> HashMap<String, u16> {
 
 /// Find function exit points (RTS/RTI) starting from entry address
 pub fn find_function_exits(entry: u16, prg_rom: &[u8], max_size: usize) -> Vec<u16> {
-    let cpu_base = 0x8000u16;
-    let offset = entry.wrapping_sub(cpu_base) as usize;
+    let prg_size = prg_rom.len();
+    let (cpu_base, offset) = if prg_size <= 16384 {
+        // 16KB ROM: maps to $C000-$FFFF (and mirrors to $8000-$BFFF)
+        if entry >= 0xC000 {
+            (0xC000u16, entry.wrapping_sub(0xC000) as usize)
+        } else {
+            (0x8000u16, entry.wrapping_sub(0x8000) as usize)
+        }
+    } else {
+        // 32KB+ ROM: maps to $8000-$FFFF
+        (0x8000u16, entry.wrapping_sub(0x8000) as usize)
+    };
 
     if offset >= prg_rom.len() {
         return Vec::new();
@@ -536,34 +546,16 @@ pub fn generate_pseudocode(
 
     output.push_str("\n// ========== Functions ==========\n\n");
 
-    // Generate function declarations (first pass - signatures only)
-    for func in functions.values().take(50) {  // Limit to first 50 for readability
-        output.push_str(&format!("void {}();  // ${:04X}\n", func.name, func.entry));
-    }
+    // Skip separate declarations - go straight to implementations
+    // (declarations are redundant when we show implementations)
 
-    if functions.len() > 50 {
-        output.push_str(&format!("// ... and {} more functions\n", functions.len() - 50));
-    }
+    output.push_str("// ========== Function Implementations ==========\n\n");
 
-    output.push_str("\n// ========== Function Implementations ==========\n\n");
-
-    // Generate ALL function bodies (up to a reasonable limit)
-    let mut func_count = 0;
+    // Generate ALL function bodies
+    // Most NES games have 100-300 functions
     for func in functions.values() {
         output.push_str(&generate_function_body(func, prg_rom, variables, functions));
         output.push_str("\n");
-        func_count += 1;
-
-        // Limit to prevent extremely large output files (but allow most functions)
-        // For typical NES games: 150-200 functions is reasonable
-        if func_count >= 200 {
-            break;
-        }
-    }
-
-    if functions.len() > func_count {
-        output.push_str(&format!("// ... and {} more functions (not shown to reduce output size)\n",
-            functions.len() - func_count));
     }
 
     output
@@ -591,7 +583,23 @@ fn generate_function_body(
     }
 
     // Generate pseudo-code for instructions
-    let offset = func.entry.wrapping_sub(0x8000) as usize;
+    // Handle different ROM sizes correctly:
+    // - 16KB ROM: maps to $C000-$FFFF (and mirrors to $8000-$BFFF)
+    // - 32KB+ ROM: maps to $8000-$FFFF
+    let prg_size = prg_rom.len();
+    let offset = if prg_size <= 16384 {
+        // 16KB ROM: use $C000 as base
+        if func.entry >= 0xC000 {
+            func.entry.wrapping_sub(0xC000) as usize
+        } else {
+            // Mirror: $8000-$BFFF maps to same as $C000-$FFFF
+            func.entry.wrapping_sub(0x8000) as usize
+        }
+    } else {
+        // 32KB+ ROM: use $8000 as base
+        func.entry.wrapping_sub(0x8000) as usize
+    };
+
     if offset < prg_rom.len() {
         let mut disasm = Disassembler::new(prg_rom);
         let mut pc = offset;

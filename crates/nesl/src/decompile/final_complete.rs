@@ -106,7 +106,7 @@ impl FinalCompleteDecompiler {
                     access_count: 0,
                     read_count: 0,
                     write_count: 0,
-                    access_pattern: super::advanced::AccessPattern::Unknown,
+                    access_pattern: super::advanced::AccessPattern::ReadWrite,
                 });
                 self.variable_names.insert(zp_addr, var_name);
             }

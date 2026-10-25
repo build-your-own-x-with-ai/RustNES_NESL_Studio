@@ -48,8 +48,78 @@ impl FinalCompleteDecompiler {
         }
     }
 
+    /// Scan all functions to find ALL used variables
+    fn scan_all_variables(&mut self) {
+        let mut all_zp_addrs = HashSet::new();
+
+        for (addr, func) in &self.functions {
+            let start_offset = self.addr_to_offset(*addr);
+            if start_offset >= self.prg_rom.len() {
+                continue;
+            }
+
+            // Scan up to 256 bytes or until RTS/RTI
+            let end_offset = (start_offset + 256).min(self.prg_rom.len());
+
+            let mut offset = start_offset;
+
+            while offset < end_offset && offset < self.prg_rom.len() {
+                let opcode = self.prg_rom[offset];
+
+                // Check for zero page instructions
+                match opcode {
+                    // LDA/STA/LDX/STX/LDY/STY zero page
+                    0xA5 | 0x85 | 0xA6 | 0x86 | 0xA4 | 0x84 |
+                    // INC/DEC zero page
+                    0xE6 | 0xC6 |
+                    // ASL/LSR/ROL/ROR zero page
+                    0x06 | 0x46 | 0x26 | 0x66 |
+                    // BIT zero page
+                    0x24 => {
+                        if offset + 1 < self.prg_rom.len() {
+                            let zp_addr = self.prg_rom[offset + 1];
+                            all_zp_addrs.insert(zp_addr);
+                        }
+                    }
+                    // RTS/RTI - end of function
+                    0x60 | 0x40 => break,
+                    _ => {}
+                }
+
+                // Move to next instruction (simplified)
+                offset += match opcode {
+                    0xA5 | 0x85 | 0xA6 | 0x86 | 0xA4 | 0x84 |
+                    0xE6 | 0xC6 | 0x06 | 0x46 | 0x26 | 0x66 | 0x24 => 2,
+                    _ => 1,
+                };
+            }
+        }
+
+        // Add all found variables
+        for zp_addr in all_zp_addrs {
+            if !self.variables.contains_key(&zp_addr) {
+                let var_name = format!("var_{:02X}", zp_addr);
+                self.variables.insert(zp_addr, Variable {
+                    addr: zp_addr,
+                    name: var_name.clone(),
+                    var_type: super::advanced::VarType::U8,
+                    access_count: 0,
+                    read_count: 0,
+                    write_count: 0,
+                    access_pattern: super::advanced::AccessPattern::Unknown,
+                });
+                self.variable_names.insert(zp_addr, var_name);
+            }
+        }
+
+        eprintln!("  ✅ Found {} total variables", self.variables.len());
+    }
+
     /// Generate complete, compilable NESL code
     pub fn decompile_final(&mut self) -> String {
+        // First pass: scan all functions to find ALL used variables
+        self.scan_all_variables();
+
         let mut code = String::new();
 
         // Header

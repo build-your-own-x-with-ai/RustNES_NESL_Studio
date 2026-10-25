@@ -547,19 +547,26 @@ pub fn generate_pseudocode(
 
     output.push_str("\n// ========== Function Implementations ==========\n\n");
 
-    // Generate function bodies (limit to important ones)
-    let important_funcs: Vec<_> = functions.values()
-        .filter(|f| {
-            // Include interrupt handlers and highly called functions
-            f.name == "reset" || f.name == "nmi" || f.name == "irq" ||
-            f.called_from.len() > 3
-        })
-        .take(20)
-        .collect();
+    // Generate ALL function bodies (not just 20)
+    let mut func_count = 0;
+    for func in functions.values() {
+        // Generate all important functions completely
+        if func.name == "reset" || func.name == "nmi" || func.name == "irq" ||
+           func.called_from.len() > 0 || func.calls_to.len() > 0 {
+            output.push_str(&generate_function_body(func, prg_rom, variables, functions));
+            output.push_str("\n");
+            func_count += 1;
 
-    for func in important_funcs {
-        output.push_str(&generate_function_body(func, prg_rom, variables, functions));
-        output.push_str("\n");
+            // Limit total output to prevent huge files (but much higher limit)
+            if func_count >= 100 {
+                break;
+            }
+        }
+    }
+
+    if functions.len() > func_count {
+        output.push_str(&format!("// ... and {} more functions (not shown to reduce output size)\n",
+            functions.len() - func_count));
     }
 
     output
@@ -591,7 +598,7 @@ fn generate_function_body(
     if offset < prg_rom.len() {
         let mut disasm = Disassembler::new(prg_rom);
         let mut pc = offset;
-        let max_instructions = 30;  // Limit instructions per function
+        let max_instructions = 200;  // Increased from 30 to 200
 
         for _ in 0..max_instructions {
             if pc >= prg_rom.len() {

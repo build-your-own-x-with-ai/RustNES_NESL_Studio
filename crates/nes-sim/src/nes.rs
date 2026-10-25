@@ -42,7 +42,12 @@ pub struct NesBus {
     pub oam: [u8; 256],
     pub ppuctrl: u8,
     pub ppumask: u8,
+    /// Effective scroll: the PPU's `t` register as (x, y) pixels. Set by `$2005`, and
+    /// also by `$2006` (a VRAM address write loads the coarse scroll and fine y of `t`).
     pub scroll: (u8, u8),
+    /// Effective nametable select (bits 10-11 of `t`): the last `$2000` NT bits or the
+    /// last `$2006` address bits, whichever was written most recently.
+    pub nt_sel: u8,
     pub buttons: [u8; 2],
     pub apu_writes: Vec<(u16, u8)>,
     /// `$2006`/`$2007` writes made while rendering is on and outside vblank
@@ -54,8 +59,9 @@ pub struct NesBus {
     pub sprite0_at: Option<u64>,
     /// Cycle at which the sprite-0 flag clears (the next pre-render line).
     pub sprite0_clear: u64,
-    /// `(cycle, kind, value)` for every PPUCTRL / PPUSCROLL write:
-    /// kind 0 = `$2000`, 1 = `$2005` x, 2 = `$2005` y.
+    /// `(cycle, kind, value)` for every change of the effective render registers:
+    /// kind 0 = PPUCTRL with its NT bits replaced by `nt_sel`, 1 = scroll x, 2 = scroll y.
+    /// Logged on `$2000` / `$2005` writes and on `$2006` writes (which load `t` too).
     pub reg_log: Vec<(u64, u8, u8)>,
     /// Mapper 2 bus conflicts (write value != ROM byte).
     pub bus_conflicts: usize,
@@ -105,6 +111,7 @@ impl NesBus {
             ppuctrl: 0,
             ppumask: 0,
             scroll: (0, 0),
+            nt_sel: 0,
             buttons: [0; 2],
             apu_writes: Vec::new(),
             render_conflicts: 0,
@@ -316,9 +323,33 @@ impl NesBus {
         0x40 | bit
     }
 
+    /// PPUCTRL as the renderer sees it: NT bits from `t` (`$2000` or `$2006`, whichever
+    /// came last), everything else from the register.
+    fn effective_ctrl(&self) -> u8 {
+        (self.ppuctrl & !3) | (self.nt_sel & 3)
+    }
+
+    /// A `$2006` write also loads the PPU's `t` register: the first byte sets the NT
+    /// bits, fine y and the top of coarse y; the second sets coarse x and the rest of
+    /// coarse y. Fine x is untouched. The renderer and sprite-0 logic follow `t`.
+    fn vram_addr_write_loads_t(&mut self, val: u8, second: bool) {
+        let (sx, sy) = self.scroll;
+        if second {
+            let coarse_y = (sy >> 3) & 0x18 | (val >> 5);
+            self.scroll = ((val & 0x1F) << 3 | (sx & 7), coarse_y << 3 | (sy & 7));
+        } else {
+            self.nt_sel = (val >> 2) & 3;
+            let coarse_y = (sy >> 3) & 7 | (val & 3) << 3;
+            self.scroll = (sx, coarse_y << 3 | (val >> 4) & 3);
+        }
+        self.reg_log.push((self.now, 0, self.effective_ctrl()));
+        self.reg_log.push((self.now, 1, self.scroll.0));
+        self.reg_log.push((self.now, 2, self.scroll.1));
+    }
+
     /// Whether the background pixel at screen (x, y) is opaque, for the current scroll.
     fn bg_opaque(&self, x: u8, y: u8) -> bool {
-        let wx = (self.ppuctrl as u16 & 1) * 256 + self.scroll.0 as u16 + x as u16;
+        let wx = (self.nt_sel as u16 & 1) * 256 + self.scroll.0 as u16 + x as u16;
         let mut wy = self.scroll.1 as u16 + y as u16;
         if wy >= 240 {
             wy -= 240; // vertical mirroring: the vertical nametable bit has no effect
@@ -360,6 +391,27 @@ impl NesBus {
             }
         }
         None
+    }
+
+    /// Re-evaluates this frame's sprite-0 hit after rendering is (re)enabled part-way
+    /// through the visible picture: the hardware checks every rendered pixel, so a game
+    /// that turns rendering off for a long vblank update and back on a few lines later
+    /// (SMB's column writes) still gets its hit, as long as the hit pixel is still ahead.
+    fn recheck_sprite0(&mut self) {
+        let frame_start = self.now / CYCLES_PER_FRAME * CYCLES_PER_FRAME;
+        if self.now < frame_start + pixel_cycle(0, 0) {
+            return; // still in vblank: the normal latch at the first pixel handles it
+        }
+        if self.sprite0_at.is_some_and(|h| h >= frame_start) {
+            return; // already latched a hit for this frame
+        }
+        if let Some((x, y)) = self.sprite0_hit() {
+            let at = frame_start + pixel_cycle(x, y);
+            if at >= self.now {
+                self.sprite0_at = Some(at);
+                self.sprite0_clear = frame_start + CYCLES_PER_FRAME + VBLANK_CYCLES;
+            }
+        }
     }
 
     /// One MMC3 scanline clock (the PPU's A12 rise near dot 260 of each rendered line).
@@ -433,6 +485,7 @@ impl Bus for NesBus {
             0x2000..=0x3FFF => match addr & 7 {
                 0 => {
                     self.ppuctrl = val;
+                    self.nt_sel = val & 3;
                     self.reg_log.push((self.now, 0, val));
                 }
                 1 => self.ppumask = val,
@@ -651,5 +704,94 @@ impl TestNes {
     pub fn restore_sram(&mut self, data: &[u8]) {
         let len = data.len().min(0x2000);
         self.bus.sram[..len].copy_from_slice(&data[..len]);
+    }
+}
+
+#[cfg(test)]
+mod sprite0_tests {
+    use super::*;
+
+    /// Solid background everywhere, sprite 0 (solid tile) at (100, 50).
+    fn bus() -> NesBus {
+        let mut b = NesBus::new(vec![], vec![]);
+        b.vram[16..24].fill(0xFF);
+        b.vram[0x2000..0x23C0].fill(1);
+        b.oam[..4].copy_from_slice(&[49, 1, 0, 100]);
+        b
+    }
+
+    fn latch_at_first_pixel(b: &mut NesBus) {
+        b.now = pixel_cycle(0, 0);
+        b.sprite0_at = b.sprite0_hit().map(|(x, y)| pixel_cycle(x, y));
+        b.sprite0_clear = CYCLES_PER_FRAME + VBLANK_CYCLES;
+    }
+
+    #[test]
+    fn rendering_enabled_after_the_first_pixel_still_hits_a_later_sprite0() {
+        let mut b = bus();
+        b.ppumask = 0x06; // rendering off while a long vblank update finishes
+        latch_at_first_pixel(&mut b);
+        assert_eq!(b.sprite0_at, None);
+        b.now = pixel_cycle(0, 10);
+        b.write(0x2001, 0x1E); // rendering back on at line 10, sprite 0 is at line 50
+        assert_eq!(b.sprite0_at, Some(pixel_cycle(100, 50)));
+        b.now = pixel_cycle(0, 40);
+        assert_eq!(b.read(0x2002) & 0x40, 0, "not hit yet");
+        b.now = pixel_cycle(0, 60);
+        assert_ne!(b.read(0x2002) & 0x40, 0, "hit once the sprite line was rendered");
+    }
+
+    #[test]
+    fn rendering_enabled_after_the_sprite_line_does_not_hit() {
+        let mut b = bus();
+        b.ppumask = 0x06;
+        latch_at_first_pixel(&mut b);
+        b.now = pixel_cycle(0, 80);
+        b.write(0x2001, 0x1E);
+        assert_eq!(b.sprite0_at, None);
+    }
+
+    /// SMB's NMI: a column write selects nametable 1 via `$2000` (with +32 increment),
+    /// then `UpdateScreen` ends with `$2006 <- $00, $00`, which resets `t` so the
+    /// status bar at the top is still fetched from nametable 0, where sprite 0 hits.
+    #[test]
+    fn vram_address_writes_reload_the_nametable_and_scroll_of_t() {
+        let mut b = bus(); // nametable 0 solid, nametable 1 blank
+        b.ppumask = 0x1E;
+        b.now = 500;
+        b.write(0x2000, 0x05); // nametable 1, +32 increment (column write in progress)
+        assert_eq!(b.nt_sel, 1);
+        b.write(0x2006, 0x3F);
+        b.write(0x2006, 0x00);
+        b.write(0x2006, 0x00);
+        b.write(0x2006, 0x00);
+        assert_eq!(b.nt_sel, 0, "$2006 <- $0000 clears the NT bits of t");
+        assert_eq!(b.scroll, (0, 0));
+        assert_eq!(b.ppuctrl, 0x05, "the software-visible register is unchanged");
+        latch_at_first_pixel(&mut b);
+        assert_eq!(b.sprite0_at, Some(pixel_cycle(100, 50)), "hit on nametable 0");
+        let last_ctrl = b.reg_log.iter().rev().find(|e| e.1 == 0).unwrap().2;
+        assert_eq!(last_ctrl & 3, 0, "the renderer log carries the effective NT bits");
+        // $24E5 = fine y 2 (bit 13), nametable 1, coarse y 7, coarse x 5; fine x is kept
+        b.scroll = (3, 0);
+        b.write(0x2006, 0x24);
+        b.write(0x2006, 0xE5);
+        assert_eq!(b.nt_sel, 1);
+        assert_eq!(b.scroll, (5 * 8 + 3, 7 * 8 + 2), "coarse x/y and fine y from the address");
+    }
+
+    #[test]
+    fn mask_writes_in_vblank_or_after_a_latched_hit_change_nothing() {
+        let mut b = bus();
+        b.ppumask = 0x1E;
+        latch_at_first_pixel(&mut b);
+        let hit = b.sprite0_at;
+        assert!(hit.is_some());
+        b.now = pixel_cycle(0, 5);
+        b.write(0x2001, 0x1E);
+        assert_eq!(b.sprite0_at, hit);
+        b.now = 100; // vblank of the next frame
+        b.write(0x2001, 0x1E);
+        assert_eq!(b.sprite0_at, hit);
     }
 }

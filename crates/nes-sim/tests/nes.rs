@@ -374,9 +374,10 @@ fn sprite0_hit_follows_scroll_and_nametable_select() {
     assert_eq!(bus.sprite0_hit(), None, "background moved 8 px left");
     bus.oam[3] = 240;
     assert_eq!(bus.sprite0_hit(), Some((240, 30)));
-    // nametable 1 selected: the tile must be in $2400 instead
+    // nametable 1 selected (what a $2000 write with bit 0 set loads into t):
+    // the tile must be in $2400 instead
     let mut bus = hit_bus();
-    bus.ppuctrl = 0x01;
+    bus.nt_sel = 1;
     assert_eq!(bus.sprite0_hit(), None);
     bus.vram[0x2400 + 3 * 32 + 31] = 1;
     assert_eq!(bus.sprite0_hit(), Some((248, 30)));

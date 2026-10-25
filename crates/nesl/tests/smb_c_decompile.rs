@@ -252,7 +252,7 @@ fn smb_c_output_is_readable() {
     let Some(rom) = smb_rom() else { return };
     let img = parse_ines(&rom).unwrap();
     let c = generate_c(&img).expect("生成 C 源码");
-    let funcs = c.matches("\nvoid sub_").count();
+    let funcs = c.lines().filter(|l| l.starts_with("static void sub_") && l.contains("{")).count();
     assert!(funcs >= 100, "应生成 ≥100 个函数，实际 {funcs}");
     assert!(c.contains("switch ("), "JumpEngine 跳转表应翻译为 switch");
     for sym in ["FrameCounter", "OperMode", "Player_X_Position", "Player_Y_Position"] {

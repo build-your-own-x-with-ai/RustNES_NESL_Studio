@@ -15,6 +15,8 @@ pub mod dataflow;  // Phase 3: Data flow analysis and optimization
 pub mod high_level_codegen;  // Phase 4: High-level statement generation
 pub mod complete;  // Phase 5: Complete integrated decompiler
 pub mod final_complete;  // Final: Truly compilable NESL output
+pub mod chr_extract;  // CHR ROM extraction
+pub mod data_analysis;  // Phase 6: Data segment analysis
 
 use std::path::Path;
 use std::io;

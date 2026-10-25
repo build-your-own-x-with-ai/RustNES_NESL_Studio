@@ -7,6 +7,8 @@ pub mod codegen;
 pub mod chr_decode;
 pub mod advanced;  // Advanced decompiler for ROMs without debug symbols
 pub mod nesl_codegen;  // NESL code generator (experimental)
+pub mod control_flow;  // Control flow reconstruction
+pub mod mario;  // Super Mario Bros enhanced decompiler
 
 use std::path::Path;
 use std::io;

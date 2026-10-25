@@ -14,6 +14,7 @@ USAGE:
     nesc pseudocode <file.nes> [-o <out.c>]
     nesc enhanced-pseudocode <file.nes> [-o <out.c>]
     nesc complete-decompile <file.nes> [-o <out.nesl>]
+    nesc final-decompile <file.nes> [-o <out.nesl>]
     nesc generate-nesl <file.nes> [-o <out.nesl>]
     nesc serve [--port <N>]
     nesc help";
@@ -126,6 +127,20 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             let input = input.ok_or_else(|| format!("missing ROM file\n\n{USAGE}"))?;
             nesc::cmd::complete_decompile::complete_decompile(&input, output.as_deref())
+        }
+        "final-decompile" => {
+            let mut input: Option<PathBuf> = None;
+            let mut output: Option<PathBuf> = None;
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "-o" | "--output" => output = Some(PathBuf::from(it.next().ok_or("`-o` needs a path")?)),
+                    s if s.starts_with('-') => return Err(format!("unknown option `{s}`\n\n{USAGE}")),
+                    s => input = Some(PathBuf::from(s)),
+                }
+            }
+            let input = input.ok_or_else(|| format!("missing ROM file\n\n{USAGE}"))?;
+            nesc::cmd::final_decompile::final_decompile(&input, output.as_deref())
         }
         "generate-nesl" => {
             let mut input: Option<PathBuf> = None;

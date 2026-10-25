@@ -6,3 +6,4 @@ pub mod pseudocode;
 pub mod generate_nesl;
 pub mod enhanced_pseudocode;
 pub mod complete_decompile;
+pub mod final_decompile;

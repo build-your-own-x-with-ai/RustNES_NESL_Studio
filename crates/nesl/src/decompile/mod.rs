@@ -14,6 +14,7 @@ pub mod register_elimination;  // Phase 3: Register elimination and SSA
 pub mod dataflow;  // Phase 3: Data flow analysis and optimization
 pub mod high_level_codegen;  // Phase 4: High-level statement generation
 pub mod complete;  // Phase 5: Complete integrated decompiler
+pub mod final_complete;  // Final: Truly compilable NESL output
 
 use std::path::Path;
 use std::io;

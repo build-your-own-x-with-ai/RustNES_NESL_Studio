@@ -13,6 +13,7 @@ pub mod enhanced_pseudocode;  // Phase 2: Enhanced pseudocode with control flow
 pub mod register_elimination;  // Phase 3: Register elimination and SSA
 pub mod dataflow;  // Phase 3: Data flow analysis and optimization
 pub mod high_level_codegen;  // Phase 4: High-level statement generation
+pub mod complete;  // Phase 5: Complete integrated decompiler
 
 use std::path::Path;
 use std::io;

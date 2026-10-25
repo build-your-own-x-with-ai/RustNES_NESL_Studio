@@ -365,6 +365,11 @@
                 <button class="control-btn" onclick="emuPause()">⏸ 暂停</button>
                 <button class="control-btn" onclick="emuReset()">🔄 重置</button>
             </div>
+            <div style="padding: 10px; font-size: 0.85em; color: #888; border-top: 1px solid #3c3c3c;">
+                <div>键盘控制：</div>
+                <div style="margin-top: 5px;">方向键: ↑↓←→ | A: X | B: Z</div>
+                <div>Start: Enter | Select: Ctrl</div>
+            </div>
         </div>
     </div>
 
@@ -385,6 +390,9 @@
 
     <div class="status-bar" id="statusBar"></div>
 
+    <!-- Load jsnes from CDN -->
+    <script src="https://unpkg.com/jsnes/dist/jsnes.min.js"></script>
+
     <script type="module">
         import init, { nesc_compile, nesc_decompile } from '../crates/nesc-wasm/pkg/nesc_wasm.js';
 
@@ -392,6 +400,8 @@
         let currentCode = '';
         let currentROM = null;
         let isAnalysisMode = false; // 分析模式（伪代码，不可编译）
+        let nesEmulator = null;
+        let emulatorRunning = false;
 
         // Initialize WASM
         window.addEventListener('DOMContentLoaded', async () => {
@@ -586,32 +596,124 @@
             showStatus('ROM 已下载', 'success');
         };
 
-        // Emulator stubs
-        function loadEmulator(romBytes) {
+        // Emulator implementation
+        function initEmulator() {
             const canvas = document.getElementById('nesCanvas');
             const ctx = canvas.getContext('2d');
 
-            // Draw placeholder
-            ctx.fillStyle = '#333';
-            ctx.fillRect(0, 0, 256, 240);
-            ctx.fillStyle = '#667eea';
-            ctx.font = '20px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('ROM 已加载', 128, 100);
-            ctx.fillText('模拟器集成中...', 128, 130);
-            ctx.fillText('(使用外部模拟器测试)', 128, 160);
+            if (typeof jsnes === 'undefined') {
+                console.error('jsnes not loaded');
+                return null;
+            }
+
+            const imageData = ctx.createImageData(256, 240);
+
+            const nes = new jsnes.NES({
+                onFrame: function(frameBuffer) {
+                    // Convert frame buffer to image data
+                    for (let i = 0; i < frameBuffer.length; i++) {
+                        const pixel = frameBuffer[i];
+                        imageData.data[i * 4 + 0] = pixel & 0xFF;
+                        imageData.data[i * 4 + 1] = (pixel >> 8) & 0xFF;
+                        imageData.data[i * 4 + 2] = (pixel >> 16) & 0xFF;
+                        imageData.data[i * 4 + 3] = 0xFF;
+                    }
+                    ctx.putImageData(imageData, 0, 0);
+                },
+                onAudioSample: function(left, right) {
+                    // Audio support (optional)
+                }
+            });
+
+            // Keyboard controls
+            const keyMap = {
+                88: jsnes.Controller.BUTTON_A,      // X
+                90: jsnes.Controller.BUTTON_B,      // Z
+                17: jsnes.Controller.BUTTON_SELECT, // Ctrl
+                13: jsnes.Controller.BUTTON_START,  // Enter
+                38: jsnes.Controller.BUTTON_UP,     // ↑
+                40: jsnes.Controller.BUTTON_DOWN,   // ↓
+                37: jsnes.Controller.BUTTON_LEFT,   // ←
+                39: jsnes.Controller.BUTTON_RIGHT   // →
+            };
+
+            document.addEventListener('keydown', (e) => {
+                if (keyMap[e.keyCode] !== undefined && emulatorRunning) {
+                    nes.buttonDown(1, keyMap[e.keyCode]);
+                    e.preventDefault();
+                }
+            });
+
+            document.addEventListener('keyup', (e) => {
+                if (keyMap[e.keyCode] !== undefined && emulatorRunning) {
+                    nes.buttonUp(1, keyMap[e.keyCode]);
+                    e.preventDefault();
+                }
+            });
+
+            return nes;
+        }
+
+        function loadEmulator(romBytes) {
+            if (!nesEmulator) {
+                nesEmulator = initEmulator();
+                if (!nesEmulator) {
+                    showStatus('模拟器初始化失败', 'error');
+                    return;
+                }
+            }
+
+            try {
+                // Convert Uint8Array to string for jsnes
+                let romString = '';
+                for (let i = 0; i < romBytes.length; i++) {
+                    romString += String.fromCharCode(romBytes[i]);
+                }
+
+                nesEmulator.loadROM(romString);
+                showStatus('ROM 已加载到模拟器', 'success');
+            } catch (err) {
+                showStatus('加载 ROM 失败: ' + err.message, 'error');
+            }
         }
 
         window.emuPlay = function() {
-            showStatus('模拟器功能开发中', '');
+            if (!nesEmulator || !currentROM) {
+                showStatus('请先编译或加载 ROM', 'error');
+                return;
+            }
+
+            emulatorRunning = true;
+
+            function frame() {
+                if (emulatorRunning) {
+                    nesEmulator.frame();
+                    requestAnimationFrame(frame);
+                }
+            }
+
+            frame();
+            showStatus('模拟器运行中...', 'success');
         };
 
         window.emuPause = function() {
-            showStatus('模拟器功能开发中', '');
+            emulatorRunning = false;
+            showStatus('模拟器已暂停', '');
         };
 
         window.emuReset = function() {
-            showStatus('模拟器功能开发中', '');
+            if (nesEmulator) {
+                emulatorRunning = false;
+                nesEmulator.reset();
+
+                // Clear canvas
+                const canvas = document.getElementById('nesCanvas');
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, 256, 240);
+
+                showStatus('模拟器已重置', '');
+            }
         };
 
         // UI helpers

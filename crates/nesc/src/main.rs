@@ -11,6 +11,7 @@ USAGE:
     nesc check <file.nesl>
     nesc decompile <file.nes> [-s <symbols.syms>] [-o <out.nesl>]
     nesc disasm <file.nes> [-o <out.asm>]
+    nesc pseudocode <file.nes> [-o <out.c>]
     nesc serve [--port <N>]
     nesc help";
 
@@ -80,6 +81,20 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             let input = input.ok_or_else(|| format!("missing ROM file\n\n{USAGE}"))?;
             nesc::cmd::disasm::disasm(&input, output.as_deref())
+        }
+        "pseudocode" => {
+            let mut input: Option<PathBuf> = None;
+            let mut output: Option<PathBuf> = None;
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "-o" | "--output" => output = Some(PathBuf::from(it.next().ok_or("`-o` needs a path")?)),
+                    s if s.starts_with('-') => return Err(format!("unknown option `{s}`\n\n{USAGE}")),
+                    s => input = Some(PathBuf::from(s)),
+                }
+            }
+            let input = input.ok_or_else(|| format!("missing ROM file\n\n{USAGE}"))?;
+            nesc::cmd::pseudocode::pseudocode(&input, output.as_deref())
         }
         #[cfg(not(target_arch = "wasm32"))]
         "serve" => {

@@ -11,6 +11,8 @@ USAGE:
     nesc check <file.nesl>
     nesc decompile <file.nes> [-s <symbols.syms>] [-o <out.nesl>]
     nesc disasm <file.nes> [-o <out.asm>]
+    nesc disasm-full <file.nes> [-o <out.asm>]   # 字节级往返反汇编（NROM），CHR 写到同名 .chr
+    nesc asm <file.asm> [-o <out.nes>]           # 从往返源码重建 ROM
     nesc pseudocode <file.nes> [-o <out.c>]
     nesc enhanced-pseudocode <file.nes> [-o <out.c>]
     nesc complete-decompile <file.nes> [-o <out.nesl>]
@@ -89,6 +91,24 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             let input = input.ok_or_else(|| format!("missing ROM file\n\n{USAGE}"))?;
             nesc::cmd::disasm::disasm(&input, output.as_deref())
+        }
+        "disasm-full" | "asm" => {
+            let mut input: Option<PathBuf> = None;
+            let mut output: Option<PathBuf> = None;
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "-o" | "--output" => output = Some(PathBuf::from(it.next().ok_or("`-o` needs a path")?)),
+                    s if s.starts_with('-') => return Err(format!("unknown option `{s}`\n\n{USAGE}")),
+                    s => input = Some(PathBuf::from(s)),
+                }
+            }
+            let input = input.ok_or_else(|| format!("missing input file\n\n{USAGE}"))?;
+            if cmd == "disasm-full" {
+                nesc::cmd::roundtrip::disasm_full(&input, output.as_deref())
+            } else {
+                nesc::cmd::roundtrip::assemble(&input, output.as_deref())
+            }
         }
         "pseudocode" => {
             let mut input: Option<PathBuf> = None;

@@ -401,3 +401,18 @@ pub fn decompile_final(prg_rom: &[u8]) -> String {
     let mut decompiler = FinalCompleteDecompiler::new(prg_rom);
     decompiler.decompile_final()
 }
+
+/// Generate final decompile from ROM file path
+pub fn final_decompile_to_string(rom_path: &std::path::Path) -> Result<String, String> {
+    let rom_bytes = std::fs::read(rom_path)
+        .map_err(|e| format!("Cannot read ROM: {}", e))?;
+
+    if rom_bytes.len() < 16 || &rom_bytes[0..4] != b"NES\x1a" {
+        return Err("Invalid NES ROM file".to_string());
+    }
+
+    let prg_banks = rom_bytes[4] as usize;
+    let prg_rom = &rom_bytes[16..16 + prg_banks * 16384];
+
+    Ok(decompile_final(prg_rom))
+}

@@ -18,6 +18,7 @@ pub mod final_complete;  // Final: Truly compilable NESL output
 pub mod chr_extract;  // CHR ROM extraction
 pub mod data_analysis;  // Phase 6: Data segment analysis
 pub mod chr_integration;  // Phase 7: CHR ROM integration
+pub mod complete_generator;  // Phase 8: Complete code generation
 
 use std::path::Path;
 use std::io;

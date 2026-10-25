@@ -9,3 +9,4 @@ pub mod complete_decompile;
 pub mod final_decompile;
 pub mod analyze_data;
 pub mod extract_chr;
+pub mod generate_complete;

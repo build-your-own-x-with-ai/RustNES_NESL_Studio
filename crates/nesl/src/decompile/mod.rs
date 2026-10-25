@@ -10,6 +10,7 @@ pub mod nesl_codegen;  // NESL code generator (experimental)
 pub mod control_flow;  // Control flow reconstruction
 pub mod mario;  // Super Mario Bros enhanced decompiler
 pub mod enhanced_pseudocode;  // Phase 2: Enhanced pseudocode with control flow
+pub mod register_elimination;  // Phase 3: Register elimination and SSA
 
 use std::path::Path;
 use std::io;

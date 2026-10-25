@@ -1,0 +1,111 @@
+// ════════════════════════════════════════════════════════
+//   Super Mario Bros - Working Demo
+// ════════════════════════════════════════════════════════
+//
+// This is a minimal working version that displays graphics
+//
+
+// ========== Palette Data ==========
+
+const PAL: [u8] = [
+    0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,  0x0F, 0x30, 0x10, 0x00,
+    0x0F, 0x16, 0x27, 0x30,  0x0F, 0x16, 0x27, 0x30,  0x0F, 0x16, 0x27, 0x30,  0x0F, 0x16, 0x27, 0x30,
+];
+
+// ========== CHR Tiles ==========
+
+// Mario face tile
+tile 1 = [
+    "......11",
+    "....1111",
+    "...11111",
+    "...11111",
+    "...33322",
+    "..322322",
+    "..322332",
+    ".3322332",
+];
+
+tile 2 = [
+    "111.....",
+    "112.....",
+    "122.....",
+    "111111..",
+    "3222....",
+    "332222..",
+    "2222222.",
+    "2232222.",
+];
+
+tile 3 = [
+    ".3322222",
+    ".3332222",
+    "...33222",
+    ".....333",
+    "....1111",
+    "...33331",
+    "..333333",
+    ".3333333",
+];
+
+tile 4 = [
+    "333333..",
+    "233333..",
+    "22222...",
+    "22......",
+    "331...2.",
+    "1331.222",
+    "11313222",
+    "11331222",
+];
+
+// ========== Variables ==========
+
+var sprite_x: u8 = 120;
+var sprite_y: u8 = 100;
+
+// ========== Initialization ==========
+
+fn init_graphics() {
+    // Turn off PPU
+    ppu_off();
+
+    // Load palette
+    load_palette(PAL);
+
+    // Clear screen
+    vram_addr(0x2000);
+    vram_fill(0, 1024);
+
+    // Draw some text
+    print(8, 10, "MARIO DEMO");
+    print(7, 12, "USE D-PAD TO MOVE");
+
+    // Turn on PPU
+    ppu_on();
+}
+
+// ========== Main Entry Point ==========
+
+fn main() {
+    // Initialize graphics
+    init_graphics();
+
+    // Game loop
+    loop {
+        wait_vblank();
+
+        // Handle input
+        let pad = joypad(0);
+        if pad & BTN_LEFT { sprite_x -= 1; }
+        if pad & BTN_RIGHT { sprite_x += 1; }
+        if pad & BTN_UP { sprite_y -= 1; }
+        if pad & BTN_DOWN { sprite_y += 1; }
+
+        // Draw sprite (Mario)
+        sprite(0, sprite_x, sprite_y, 1, 1);
+        sprite(1, sprite_x + 8, sprite_y, 2, 1);
+        sprite(2, sprite_x, sprite_y + 8, 3, 1);
+        sprite(3, sprite_x + 8, sprite_y + 8, 4, 1);
+    }
+}

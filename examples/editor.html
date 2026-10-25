@@ -415,30 +415,102 @@
             }
         });
 
+        // Available examples
+        const examples = {
+            'sprite': {
+                name: 'sprite.nesl',
+                path: '../examples/sprite.nesl',
+                description: '精灵演示'
+            },
+            'mario': {
+                name: 'super_mario_bros.nesl',
+                path: '../output/decompiled/super_mario_bros.nesl',
+                description: 'Super Mario Bros 反编译'
+            }
+        };
+
         // Load example
-        window.loadExample = async function() {
+        window.loadExample = async function(exampleKey) {
             if (!wasmReady) {
                 showStatus('WASM 尚未加载完成', 'error');
                 return;
             }
 
-            // Load sprite.nesl source code
+            // If no key provided, show selection menu
+            if (!exampleKey) {
+                showExampleMenu();
+                return;
+            }
+
+            const example = examples[exampleKey];
+            if (!example) {
+                showStatus('示例不存在', 'error');
+                return;
+            }
+
+            // Load example source code
             try {
-                const response = await fetch('../examples/sprite.nesl');
+                const response = await fetch(example.path);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
                 const code = await response.text();
 
                 document.getElementById('uploadOverlay').classList.add('hidden');
                 document.getElementById('editor').value = code;
-                document.getElementById('romName').textContent = 'sprite.nesl';
+                document.getElementById('romName').textContent = example.name;
                 currentCode = code;
                 isAnalysisMode = false;
 
                 updateUIMode();
-                showStatus('示例已加载', 'success');
+                showStatus(`已加载: ${example.description}`, 'success');
             } catch (err) {
                 showStatus('加载示例失败: ' + err, 'error');
             }
         };
+
+        // Show example selection menu
+        function showExampleMenu() {
+            const menu = document.createElement('div');
+            menu.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: #2d2d30;
+                border: 1px solid #3c3c3c;
+                border-radius: 8px;
+                padding: 20px;
+                z-index: 10000;
+                min-width: 400px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            `;
+
+            menu.innerHTML = `
+                <h3 style="margin-bottom: 15px; color: #fff;">选择示例</h3>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <button onclick="loadExample('sprite'); this.parentElement.parentElement.remove();"
+                            style="padding: 15px; background: #4CAF50; border: none; border-radius: 4px;
+                                   color: white; cursor: pointer; text-align: left; font-size: 14px;">
+                        <strong>🎮 Sprite 演示</strong><br>
+                        <span style="opacity: 0.8; font-size: 12px;">基础精灵显示示例</span>
+                    </button>
+                    <button onclick="loadExample('mario'); this.parentElement.parentElement.remove();"
+                            style="padding: 15px; background: #667eea; border: none; border-radius: 4px;
+                                   color: white; cursor: pointer; text-align: left; font-size: 14px;">
+                        <strong>🍄 Super Mario Bros</strong><br>
+                        <span style="opacity: 0.8; font-size: 12px;">完整反编译代码（586 行，35 个函数）</span>
+                    </button>
+                    <button onclick="this.parentElement.parentElement.remove();"
+                            style="padding: 10px; background: #555; border: none; border-radius: 4px;
+                                   color: white; cursor: pointer;">
+                        取消
+                    </button>
+                </div>
+            `;
+
+            document.body.appendChild(menu);
+        }
 
         function updateUIMode() {
             const compileBtn = document.querySelector('.btn-primary');

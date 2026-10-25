@@ -547,20 +547,17 @@ pub fn generate_pseudocode(
 
     output.push_str("\n// ========== Function Implementations ==========\n\n");
 
-    // Generate ALL function bodies (not just 20)
+    // Generate ALL function bodies (up to a reasonable limit)
     let mut func_count = 0;
     for func in functions.values() {
-        // Generate all important functions completely
-        if func.name == "reset" || func.name == "nmi" || func.name == "irq" ||
-           func.called_from.len() > 0 || func.calls_to.len() > 0 {
-            output.push_str(&generate_function_body(func, prg_rom, variables, functions));
-            output.push_str("\n");
-            func_count += 1;
+        output.push_str(&generate_function_body(func, prg_rom, variables, functions));
+        output.push_str("\n");
+        func_count += 1;
 
-            // Limit total output to prevent huge files (but much higher limit)
-            if func_count >= 100 {
-                break;
-            }
+        // Limit to prevent extremely large output files (but allow most functions)
+        // For typical NES games: 150-200 functions is reasonable
+        if func_count >= 200 {
+            break;
         }
     }
 

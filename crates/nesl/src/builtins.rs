@@ -147,6 +147,21 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("split_scroll", "split_scroll(x: u16)", "只能在 fn irq() 里用：从当前行起水平卷轴改为 x"),
 ];
 
+/// All high-level builtin function names that have a `__name` label in the ROM.
+/// Used by the decompiler to populate the builtin address table.
+pub const BUILTIN_NAMES: &[&str] = &[
+    "wait_vblank", "ppu_on", "ppu_off", "frame_count", "rand",
+    "load_palette", "vram_addr", "vram_put", "vram_fill",
+    "print", "print_u8", "print_u16", "set_tile",
+    "sprite", "hide_sprite", "joypad", "scroll",
+    "peek", "poke", "play_tone", "stop_sound",
+    "draw_map", "map_tile", "camera_follow", "set_map_tile", "reset_map",
+    "status_bar", "camera_x", "metasprite", "collide",
+    "sfx", "play_music", "stop_music",
+    "save_game", "load_game",
+    "scanline_irq", "split_scroll",
+];
+
 pub fn is_builtin_fn(name: &str) -> bool {
     signature(name).is_some()
 }

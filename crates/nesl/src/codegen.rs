@@ -78,6 +78,8 @@ pub struct Codegen {
     pub errors: Vec<Diagnostic>,
     /// Read-only data blocks emitted after all code.
     pub(crate) data: Vec<(String, Vec<u8>)>,
+    /// `const NAME: [T]` tables by name, exposed in `CompileOutput::data`.
+    pub(crate) data_info: BTreeMap<String, crate::DataInfo>,
     pub(crate) tiles: Vec<Tile>,
     inits: Vec<(u16, Type, u16)>,
 }
@@ -210,6 +212,7 @@ impl Codegen {
             ram_next: USER_RAM_START,
             errors: Vec::new(),
             data: Vec::new(),
+            data_info: BTreeMap::new(),
             tiles: Vec::new(),
             inits: Vec::new(),
         }
@@ -420,7 +423,7 @@ impl Codegen {
             };
             start.get_or_insert(addr);
             total += size;
-            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size });
+            self.vars.insert(format!("{name}.{fname}"), VarInfo { addr, size, elem: *fty, init: None });
             syms.push((format!("{name}.{fname}"), sym));
         }
         let marker = match len {
@@ -759,6 +762,7 @@ impl Codegen {
                 }
                 let label = format!("d_{name}");
                 self.globals.insert(name.clone(), Sym::Data { label: label.clone(), len: elems.len() as u16, elem: *elem });
+                self.data_info.insert(name.clone(), crate::DataInfo { len: elems.len() as u16, elem: *elem });
                 self.data.push((label, lo));
             }
             Decl::Struct { .. } => {}
@@ -786,15 +790,18 @@ impl Codegen {
                             }
                         }
                         self.globals.insert(name.clone(), Sym::Var { addr, ty: *t });
-                        self.vars.insert(name.clone(), VarInfo { addr, size });
-                    }
+                        let init_val = init.as_ref().and_then(|_| {
+                            let v = self.inits.last();
+                            v.filter(|(a, _, _)| *a == addr).map(|(_, _, v)| *v)
+                        });
+                        self.vars.insert(name.clone(), VarInfo { addr, size, elem: *t, init: init_val });                    }
                     VarType::Array(elem, len) => {
                         if init.is_some() {
                             return self.err(*pos, "RAM arrays cannot have an initializer (they start zeroed)");
                         }
                         let (sym, addr, size) = self.alloc_array(*elem, len, *pos)?;
                         self.globals.insert(name.clone(), sym);
-                        self.vars.insert(name.clone(), VarInfo { addr, size });
+                        self.vars.insert(name.clone(), VarInfo { addr, size, elem: *elem, init: None });
                     }
                 }
             }

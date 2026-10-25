@@ -7,3 +7,4 @@ license.workspace = true
 
 [dependencies]
 nesl = { path = "../nesl" }
+serde_json = "1.0"

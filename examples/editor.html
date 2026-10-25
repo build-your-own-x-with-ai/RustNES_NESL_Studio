@@ -391,6 +391,7 @@
         let wasmReady = false;
         let currentCode = '';
         let currentROM = null;
+        let isAnalysisMode = false; // 分析模式（伪代码，不可编译）
 
         // Initialize WASM
         window.addEventListener('DOMContentLoaded', async () => {
@@ -420,12 +421,34 @@
                 document.getElementById('editor').value = code;
                 document.getElementById('romName').textContent = 'sprite.nesl';
                 currentCode = code;
+                isAnalysisMode = false;
 
+                updateUIMode();
                 showStatus('示例已加载', 'success');
             } catch (err) {
                 showStatus('加载示例失败: ' + err, 'error');
             }
         };
+
+        function updateUIMode() {
+            const compileBtn = document.querySelector('.btn-primary');
+            const editor = document.getElementById('editor');
+
+            if (isAnalysisMode) {
+                // Analysis mode - read-only
+                compileBtn.disabled = true;
+                compileBtn.textContent = '🔍 分析模式（不可编译）';
+                compileBtn.style.opacity = '0.5';
+                editor.style.opacity = '0.7';
+                showStatus('分析模式：此为伪代码，无法编译。请上传 .nesl 源码文件以编译。', '');
+            } else {
+                // Edit mode - can compile
+                compileBtn.disabled = false;
+                compileBtn.textContent = '▶ 编译运行';
+                compileBtn.style.opacity = '1';
+                editor.style.opacity = '1';
+            }
+        }
 
         // Upload ROM
         window.uploadROM = function() {
@@ -446,11 +469,13 @@
                     document.getElementById('editor').value = code;
                     document.getElementById('romName').textContent = file.name;
                     currentCode = code;
+                    isAnalysisMode = false;
+                    updateUIMode();
                     showStatus('NESL 源码已加载', 'success');
                 };
                 reader.readAsText(file);
             } else if (file.name.endsWith('.nes')) {
-                // Load ROM and try to decompile
+                // Load ROM and analyze (not compilable)
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     const bytes = new Uint8Array(e.target.result);
@@ -464,14 +489,14 @@
         };
 
         function processROM(romBytes, filename) {
-            showStatus('正在反编译...', '');
+            showStatus('正在分析 ROM...', '');
 
             setTimeout(() => {
                 try {
                     // Convert to base64
                     const base64 = btoa(String.fromCharCode(...romBytes));
 
-                    // Decompile
+                    // Decompile to pseudocode
                     const result = nesc_decompile(base64);
                     const data = JSON.parse(result);
 
@@ -479,16 +504,20 @@
                         throw new Error(data.error);
                     }
 
-                    // Extract NESL code from pseudocode (simplified)
+                    // This is pseudocode, not compilable NESL
                     currentCode = data.pseudocode;
                     document.getElementById('editor').value = currentCode;
-                    document.getElementById('romName').textContent = filename;
+                    document.getElementById('romName').textContent = filename + ' (分析模式)';
 
                     currentROM = romBytes;
+                    isAnalysisMode = true;
 
-                    showStatus('反编译完成', 'success');
+                    // Disable compile button in analysis mode
+                    updateUIMode();
+
+                    showStatus('ROM 分析完成（伪代码）', 'success');
                 } catch (err) {
-                    showStatus('反编译失败: ' + err.message, 'error');
+                    showStatus('分析失败: ' + err.message, 'error');
                 }
             }, 100);
         }
@@ -497,6 +526,11 @@
         window.compileAndRun = function() {
             if (!wasmReady) {
                 showStatus('WASM 尚未加载完成', 'error');
+                return;
+            }
+
+            if (isAnalysisMode) {
+                showStatus('分析模式下无法编译。请上传 .nesl 源码文件。', 'error');
                 return;
             }
 
@@ -509,8 +543,8 @@
                     const data = JSON.parse(result);
 
                     if (!data.ok) {
-                        const errors = data.errors.map(e => `${e.line}:${e.col} ${e.message}`).join('\\n');
-                        showStatus('编译失败:\\n' + errors, 'error');
+                        const errors = data.errors.map(e => `行 ${e.line}:${e.col} ${e.message}`).join('\n');
+                        showStatus('编译失败:\n' + errors, 'error');
                         return;
                     }
 

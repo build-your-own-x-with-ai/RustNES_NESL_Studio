@@ -6,6 +6,7 @@ pub mod ast_builder;
 pub mod codegen;
 pub mod chr_decode;
 pub mod advanced;  // Advanced decompiler for ROMs without debug symbols
+pub mod nesl_codegen;  // NESL code generator (experimental)
 
 use std::path::Path;
 use std::io;

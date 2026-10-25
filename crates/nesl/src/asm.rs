@@ -77,7 +77,35 @@ pub struct Assembled {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Mode { Imp, Acc, Imm, Zp, ZpX, ZpY, Abs, AbsX, AbsY, Ind, IndX, IndY, Rel }
+pub enum Mode { Imp, Acc, Imm, Zp, ZpX, ZpY, Abs, AbsX, AbsY, Ind, IndX, IndY, Rel }
+
+/// 编码表查询：给定 (Op, Mode) 返回官方 opcode 字节。
+pub fn encode_opcode(op: Op, mode: Mode) -> Option<u8> {
+    opcode(op, mode)
+}
+
+/// 256 项反查表：opcode 字节 → (Op, Mode)。由 `opcode()` 反向生成，
+/// 与 `encode_opcode` 互逆由构造保证（Feature 019 往返反汇编的基础）。
+pub fn opcode_table() -> [Option<(Op, Mode)>; 256] {
+    use Mode::*;
+    use Op::*;
+    const OPS: [Op; 56] = [
+        ADC, AND, ASL, BCC, BCS, BEQ, BIT, BMI, BNE, BPL, BRK, BVC, BVS, CLC, CLD, CLI, CLV,
+        CMP, CPX, CPY, DEC, DEX, DEY, EOR, INC, INX, INY, JMP, JSR, LDA, LDX, LDY, LSR, NOP,
+        ORA, PHA, PHP, PLA, PLP, ROL, ROR, RTI, RTS, SBC, SEC, SED, SEI, STA, STX, STY, TAX,
+        TAY, TSX, TXA, TXS, TYA,
+    ];
+    const MODES: [Mode; 13] = [Imp, Acc, Imm, Zp, ZpX, ZpY, Abs, AbsX, AbsY, Ind, IndX, IndY, Rel];
+    let mut table = [None; 256];
+    for op in OPS {
+        for mode in MODES {
+            if let Some(byte) = opcode(op, mode) {
+                table[byte as usize] = Some((op, mode));
+            }
+        }
+    }
+    table
+}
 
 fn opcode(op: Op, mode: Mode) -> Option<u8> {
     use Mode::*;

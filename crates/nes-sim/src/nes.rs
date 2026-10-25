@@ -488,7 +488,10 @@ impl Bus for NesBus {
                     self.nt_sel = val & 3;
                     self.reg_log.push((self.now, 0, val));
                 }
-                1 => self.ppumask = val,
+                1 => {
+                    self.ppumask = val;
+                    self.recheck_sprite0();
+                }
                 3 => self.oam_addr = val,
                 4 => {
                     self.oam[self.oam_addr as usize] = val;
@@ -510,6 +513,7 @@ impl Bus for NesBus {
                     } else {
                         self.ppu_addr = ((val as u16 & 0x3F) << 8) | (self.ppu_addr & 0x00FF);
                     }
+                    self.vram_addr_write_loads_t(val, self.write_toggle);
                     self.write_toggle = !self.write_toggle;
                 }
                 7 => {
